@@ -1,0 +1,30 @@
+services:
+  # 1. The Web UI (Inertia + Vue)
+  - type: web
+    name: sentinel-ui
+    env: php
+    plan: starter
+    buildCommand: composer install && npm install && npm run build
+    startCommand: php artisan serve --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: APP_SERVICE
+        value: web
+
+  # 2. The Sentinel Worker (Redis Stream Consumer)
+  # - type: worker
+  #   name: sentinel-worker
+  #   env: php
+  #   plan: starter
+  #   buildCommand: composer install --no-dev
+  #   # This replaces the need for a manual shell command:
+  #   startCommand: php artisan sentinel:consume
+  #   envVars:
+  #     - key: APP_SERVICE
+  #       value: worker
+
+  # # 3. The Reclaimer (Zero-Loss Recovery)
+  # - type: worker
+  #   name: sentinel-reclaimer
+  #   env: php
+  #   plan: starter
+  #   startCommand: php artisan sentinel:recover

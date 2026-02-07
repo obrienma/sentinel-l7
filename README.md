@@ -6,7 +6,7 @@ Sentinel-L7 does not monitor infrastructure; it monitors **Business Intent**.
 ---
 
 ## Status
-🚧 Coming Soon!
+🚧 Under Construction
 
 ---
 
@@ -147,6 +147,57 @@ stateDiagram-v2
 
     Zombie --> Processing: Reclaimer XCLAIM (min-idle > 60s)
     Success --> [*]
+```
+
+## Service Layer: Classes
+```mermaid
+classDiagram
+    direction TB
+
+    %% Interface Definition
+    class ComplianceDriver {
+        <<interface>>
+        +analyze(array data) array
+    }
+
+    %% Concrete Strategies
+    class GeminiDriver {
+        +analyze(array data) array
+    }
+
+    class OpenRouterDriver {
+        +analyze(array data) array
+    }
+
+    %% The Manager (Context)
+    class ComplianceManager {
+        -Application app
+        +driver(string name) ComplianceDriver
+        #createGeminiDriver() ComplianceDriver
+        #createOpenrouterDriver() ComplianceDriver
+        +getDefaultDriver() string
+    }
+
+    %% The Consumer/Client
+    class ComplianceEngine {
+        -ComplianceDriver ai
+        +__construct(ComplianceDriver ai)
+        +process(array transaction) array
+    }
+
+    %% Relationships
+    ComplianceDriver <|.. GeminiDriver : Realizes
+    ComplianceDriver <|.. OpenRouterDriver : Realizes
+
+    ComplianceManager ..> ComplianceDriver : Resolves
+    ComplianceManager ..> GeminiDriver : Creates
+    ComplianceManager ..> OpenRouterDriver : Creates
+
+    ComplianceEngine o-- ComplianceDriver : Aggregation (Injected)
+
+    %% Notes
+    note for ComplianceManager "Uses config('sentinel.ai_driver')<br/>to resolve the active driver."
+    note for ComplianceEngine "Injected via Laravel Service Container<br/>using the ComplianceDriver interface."
 ```
 
 ## Domain Logic Hierarchy (Pest Arch Test)
