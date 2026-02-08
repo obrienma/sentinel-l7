@@ -18,7 +18,7 @@ defineProps({
                 <div class="relative group">
                     <div class="absolute -inset-1 bg-gradient-to-r from-blue-600 to-cyan-500 rounded-full blur opacity-25 group-hover:opacity-50 transition duration-1000"></div>
                     <img
-                        src="/images/sentinel-l7-guard500x500.png"
+                        src="/images/sentinel-l7-guard-500x500.png"
                         alt="Sentinel Guard"
                         class="relative w-48 h-48 md:w-64 md:h-64 object-cover rounded-full border-4 border-slate-800 shadow-2xl"
                     />
