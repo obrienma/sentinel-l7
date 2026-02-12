@@ -4,7 +4,7 @@ services:
     name: sentinel-ui
     env: php
     plan: starter
-    buildCommand: composer install && npm install && npm run build
+    buildCommand: composer install && npm install && npm run build && php artisan config:clear && php artisan view:clear && ls -la public/build/
     startCommand: php artisan serve --host 0.0.0.0 --port $PORT
     envVars:
       - key: APP_SERVICE
