@@ -1,14 +1,31 @@
 # Sentinel-L7 | AI-Driven Observability Engine
 
-**A high-performance monitoring system for Finance/Medical/SaaS.** Built with **Laravel 12**, **Inertia.js**, **Upstash Redis/Vector**, and **Gemini 3 Flash**.
+[Sentinel-L7 Demo](https://sentinel-l7.cyberrhizome.ca/)
+
+**A high-performance monitoring system for Finance/Medical/SaaS.** Built with **Laravel 12**, **Inertia.js**, **Vue3**,  **Upstash Redis/Vector**, and **Gemini 3 Flash**.
 Sentinel-L7 does not monitor infrastructure; it monitors **Business Intent**.
 
 ---
 
-## Status
-🚧 Under Construction
+## 🎯 Status
+
+**Core Architecture: Complete**
+Demonstrates production patterns for semantic caching, fault-tolerant message processing, and async API workflows. Actively expanding feature coverage.
 
 ---
+## 💡 Why This Matters for API-Heavy Platforms
+
+While the demo focuses on compliance use cases, the core patterns apply to any high-volume API platform:
+
+- **Semantic Caching**: Reduce LLM API costs by 80%+ using vector similarity
+- **Async Processing**: Redis Streams handle traffic spikes without blockinggit
+- **Fault Tolerance**: Zero message loss with XCLAIM recovery
+- **API Gateway Patterns**: Service layer abstraction for swappable backends
+- **Rate Limiting**: Token bucket implementation per tenant
+
+These patterns scale to any high-volume API platform: e-commerce fraud detection, healthcare compliance monitoring, financial transaction analysis, content moderation, IoT telemetry processing, music/media distribution, real-time logistics tracking, or multi-tenant SaaS platforms serving millions of requests.
+
+By reducing redundant LLM calls through semantic caching, these patterns also address the significant energy consumption of AI inference - cutting costs while reducing environmental impact.
 
 ## 🎯 Domain-Specific Observability
 While most systems focus on **Monitoring Scope** (Is the server up?), Sentinel-L7 achieves **Domain-Specific Observability** by utilizing LLMs to reason about the semantics of financial and medical data in real-time.
@@ -50,6 +67,13 @@ Unrecognized or high-risk patterns are analyzed by Gemini 3 Flash using structur
 ### **4. The Safety Net (XCLAIM Recovery)**
 
 A dedicated recovery worker monitors the stream's Pending Entry List (PEL). If a worker process fails, the reclaimer re-assigns the message, ensuring zero data loss—a critical requirement for financial and medical auditing.
+
+### **5. Rate Limiting & Throttling**
+
+The stream consumer implements **token bucket** rate limiting per tenant:
+- Redis-based token allocation (100 req/min per API client)
+- Graceful degradation (queue overflow → backpressure)
+- Configurable per-endpoint quotas (vector search: 1000/day, LLM reasoning: 100/day)
 
 ---
 
