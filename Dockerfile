@@ -7,12 +7,13 @@ RUN apt-get update && apt-get install -y \
     libjpeg-dev \
     libfreetype6-dev \
     libzip-dev \
+    libpq-dev \
     zip \
     unzip \
     git \
     curl \
     && docker-php-ext-configure gd --with-freetype --with-jpeg \
-    && docker-php-ext-install gd pdo pdo_mysql zip pcntl
+    && docker-php-ext-install gd pdo pdo_pgsql zip pcntl
 
 # Install Node.js (needed to build your Vue/Vite assets)
 RUN curl -sL https://deb.nodesource.com/setup_20.x | bash - && \
@@ -61,4 +62,4 @@ RUN chown -R www-data:www-data /var/www/html \
     && chmod -R 775 /var/www/html/bootstrap/cache \
     && chmod -R 775 /var/www/html/public
 
-CMD ["apache2-foreground"]
+CMD php artisan config:clear && php artisan migrate --force && apache2-foreground

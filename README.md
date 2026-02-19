@@ -1,6 +1,6 @@
 # Sentinel-L7 | AI-Driven Observability Engine
 
-[Sentinel-L7 Demo](https://sentinel-l7.cyberrhizome.ca/)
+[Sentinel-L7 Early Access](https://sentinel-l7.cyberrhizome.ca/)
 
 **A high-performance monitoring system for Finance/Medical/SaaS.** Built with **Laravel 12**, **Inertia.js**, **Vue3**,  **Upstash Redis/Vector**, and **Gemini 3 Flash**.
 Sentinel-L7 does not monitor infrastructure; it monitors **Business Intent**.
@@ -10,6 +10,7 @@ Sentinel-L7 does not monitor infrastructure; it monitors **Business Intent**.
 ## 🎯 Status
 
 **Core Architecture: Complete**
+
 Demonstrates production patterns for semantic caching, fault-tolerant message processing, and async API workflows. Actively expanding feature coverage.
 
 ---
@@ -58,8 +59,11 @@ Transactions are ingested via an asynchronous stream. This ensures the primary a
 
 ### **2. The Memory (Upstash Vector)**
 
-The engine utilizes **Semantic Caching**. Before invoking the LLM, the system performs a sub-50ms vector similarity search. If a similar transaction pattern was previously analyzed, the engine reuses the existing risk report, drastically reducing latency and API costs.
 
+The engine utilizes a dual-namespace vector strategy to maximize efficiency and accuracy:
+
+- **2a. Semantic Caching (Namespace: `default`):** Before invoking the LLM, the system performs a sub-50ms similarity search. If a >0.95 match is found, the existing risk report is reused, reducing latency and costs by 80%+.
+- **2b. Policy-Grounded RAG (Namespace: `policies`):** If the cache misses, the engine queries a secondary namespace containing indexed regulatory documents (AML, HIPAA, GDPR). This "Knowledge Base" provides the LLM with the exact ruleset required to audit the specific transaction type.
 ### **3. The Cognitive Layer (Gemini 3 Flash)**
 
 Unrecognized or high-risk patterns are analyzed by Gemini 3 Flash using structured JSON mode to generate human-readable compliance justifications.
@@ -75,15 +79,6 @@ The stream consumer implements **token bucket** rate limiting per tenant:
 - Graceful degradation (queue overflow → backpressure)
 - Configurable per-endpoint quotas (vector search: 1000/day, LLM reasoning: 100/day)
 
-### **5. Rate Limiting & Throttling**
-
-The stream consumer implements **token bucket** rate limiting per tenant:
-- Redis-based token allocation (100 req/min per API client)
-- Graceful degradation (queue overflow → backpressure)
-- Configurable per-endpoint quotas (vector search: 1000/day, LLM reasoning: 100/day)
-
----
-
 ## 🛠️ Stack & Showcase
 
 - **Backend:** Laravel 12 (Service Manager Pattern, Redis Streams, Custom Artisan Daemons)
@@ -93,49 +88,56 @@ The stream consumer implements **token bucket** rate limiting per tenant:
 
 ---
 
-### 🚀 One-Command Launch
+## 🛠️ Operational Commands
 
-Bash
-
-```
-# Start all micro-services locally
-composer dev-full
-```
+- **Local Development:** `composer dev-full` (Starts Web + Worker + Reclaimer)
+- **On-Demand Simulation:** `php artisan sentinel:stream --limit=100` (Perfect for Render One-Off Jobs)
+- **Knowledge Ingestion:** `php artisan sentinel:ingest` (Indexes .md policies into the Vector Knowledge Base)
 
 ## System Diagram
 ```mermaid
 graph TB
-    subgraph "External Traffic"
+    subgraph "1. Entry & Identity"
         T1[Finance Event]
         T2[Medical Access]
         T3[SaaS API Request]
+        IdP[OAuth 2.0 / OIDC Provider]
     end
 
-    subgraph "Render Infrastructure"
-        Web[Web Dashboard - Inertia]
+    subgraph "2. Infrastructure (Render)"
+        Web[Web Dashboard - Inertia/Vue]
         Worker[Sentinel Consumer - PHP]
         Reclaimer[Safety Reclaimer - PHP]
     end
 
-    subgraph "Data & Memory"
-        Stream[(Upstash Redis Stream)]
-        Vector[(Upstash Vector Memory)]
+    subgraph "3. Data & Memory (Upstash)"
+        Stream[(Redis Stream)]
+        VectorCache[(Vector: Namespace Default)]
+        VectorRules[(Vector: Namespace Policies)]
     end
 
-    T1 & T2 & T3 -->|XADD| Stream
-    Stream -.->|XREADGROUP| Worker
-    Worker -->|1. Search| Vector
-    Worker -->|2. Reasoning| AI[Gemini 3 Flash]
-    Worker -->|3. Store| Vector
+    %% Security Flow
+    Web <-->|OIDC Auth| IdP
 
+    %% Ingestion Flow
+    T1 & T2 & T3 -->|Tenant-Scoped XADD| Stream
+
+    %% Processing Flow
+    Stream -.->|XREADGROUP| Worker
+    Worker -->|2a. Search Cache| VectorCache
+
+    %% RAG & AI Flow
+    Worker -->|2b. Fetch Policies| VectorRules
+    Worker -->|3. Reasoning| AI[Gemini 3 Flash]
+
+    %% Recovery & Feedback
     Reclaimer -.->|XCLAIM Zombie Tasks| Stream
     Worker -.->|Real-time Feed| Web
+    Worker -->|Update Cache| VectorCache
 ```
 ## The Compliance Processing Loop (Sequence)
 
 The **Semantic Cache** logic, showing the interaction between the worker and the AI.
-
-Code snippet
 
 ```mermaid
 sequenceDiagram
@@ -146,14 +148,21 @@ sequenceDiagram
     participant G as Gemini AI
 
     S->>W: Fetch Transaction (XREADGROUP)
-    W->>V: Search Similar Pattern (Vector Search)
+
+    note over W,V: 2a. Semantic Cache Check (Namespace: default)
+    W->>V: Search Similar Results
 
     alt Pattern Similarity > 0.95
         V-->>W: Return Cached Risk Report
         Note over W: Bypasses LLM (Fast Path)
     else Pattern New or Low Score
-        W->>G: Analyze Intent (JSON Prompt)
-        G-->>W: Detailed Risk Analysis
+        Note over W,V: 2b. Policy Retrieval (Namespace: policies)
+        W->>V: Fetch Relevant Regulatory Rules
+        V-->>W: Return AML/HIPAA Context
+
+        W->>G: Analyze Intent + Policy Context
+        G-->>W: Policy-Grounded Risk Analysis
+
         W->>V: Upsert New Vector + Metadata
         Note over W: Update Semantic Memory
     end
@@ -202,59 +211,6 @@ classDiagram
 
     %% The Manager (Context)
     class ComplianceManager {
-        -Application app
-        +driver(string name) ComplianceDriver
-        #createGeminiDriver() ComplianceDriver
-        #createOpenrouterDriver() ComplianceDriver
-        +getDefaultDriver() string
-    }
-
-    %% The Consumer/Client
-    class ComplianceEngine {
-        -ComplianceDriver ai
-        +__construct(ComplianceDriver ai)
-        +process(array transaction) array
-    }
-
-    %% Relationships
-    ComplianceDriver <|.. GeminiDriver : Realizes
-    ComplianceDriver <|.. OpenRouterDriver : Realizes
-
-    ComplianceManager ..> ComplianceDriver : Resolves
-    ComplianceManager ..> GeminiDriver : Creates
-    ComplianceManager ..> OpenRouterDriver : Creates
-
-    ComplianceEngine o-- ComplianceDriver : Aggregation (Injected)
-
-    %% Notes
-    note for ComplianceManager "Uses config('sentinel.ai_driver')<br/>to resolve the active driver."
-    note for ComplianceEngine "Injected via Laravel Service Container<br/>using the ComplianceDriver interface."
-```
-
-## Domain Logic Hierarchy (Pest Arch Test)
-```mermaid
-graph LR
-    subgraph "Protected Core"
-        Domain[App\Services\Sentinel\Logic]
-    end
-
-    subgraph "Infrastructure"
-        Http[Laravel Http Facade]
-        Redis[Redis Facade]
-    end
-
-    subgraph "Entry Points"
-        Web[App\Http\Controllers]
-        Console[App\Console\Commands]
-    end
-
-    Console --> Domain
-    Web --> Domain
-    Domain -.->|Forbidden| Http
-    Domain -.->|Forbidden| Redis
-    Domain -->|Allowed| Contract[ComplianceDriver Interface]
-```
-ger {
         -Application app
         +driver(string name) ComplianceDriver
         #createGeminiDriver() ComplianceDriver
