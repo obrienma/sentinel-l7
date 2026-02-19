@@ -75,6 +75,13 @@ The stream consumer implements **token bucket** rate limiting per tenant:
 - Graceful degradation (queue overflow → backpressure)
 - Configurable per-endpoint quotas (vector search: 1000/day, LLM reasoning: 100/day)
 
+### **5. Rate Limiting & Throttling**
+
+The stream consumer implements **token bucket** rate limiting per tenant:
+- Redis-based token allocation (100 req/min per API client)
+- Graceful degradation (queue overflow → backpressure)
+- Configurable per-endpoint quotas (vector search: 1000/day, LLM reasoning: 100/day)
+
 ---
 
 ## 🛠️ Stack & Showcase
@@ -195,6 +202,59 @@ classDiagram
 
     %% The Manager (Context)
     class ComplianceManager {
+        -Application app
+        +driver(string name) ComplianceDriver
+        #createGeminiDriver() ComplianceDriver
+        #createOpenrouterDriver() ComplianceDriver
+        +getDefaultDriver() string
+    }
+
+    %% The Consumer/Client
+    class ComplianceEngine {
+        -ComplianceDriver ai
+        +__construct(ComplianceDriver ai)
+        +process(array transaction) array
+    }
+
+    %% Relationships
+    ComplianceDriver <|.. GeminiDriver : Realizes
+    ComplianceDriver <|.. OpenRouterDriver : Realizes
+
+    ComplianceManager ..> ComplianceDriver : Resolves
+    ComplianceManager ..> GeminiDriver : Creates
+    ComplianceManager ..> OpenRouterDriver : Creates
+
+    ComplianceEngine o-- ComplianceDriver : Aggregation (Injected)
+
+    %% Notes
+    note for ComplianceManager "Uses config('sentinel.ai_driver')<br/>to resolve the active driver."
+    note for ComplianceEngine "Injected via Laravel Service Container<br/>using the ComplianceDriver interface."
+```
+
+## Domain Logic Hierarchy (Pest Arch Test)
+```mermaid
+graph LR
+    subgraph "Protected Core"
+        Domain[App\Services\Sentinel\Logic]
+    end
+
+    subgraph "Infrastructure"
+        Http[Laravel Http Facade]
+        Redis[Redis Facade]
+    end
+
+    subgraph "Entry Points"
+        Web[App\Http\Controllers]
+        Console[App\Console\Commands]
+    end
+
+    Console --> Domain
+    Web --> Domain
+    Domain -.->|Forbidden| Http
+    Domain -.->|Forbidden| Redis
+    Domain -->|Allowed| Contract[ComplianceDriver Interface]
+```
+ger {
         -Application app
         +driver(string name) ComplianceDriver
         #createGeminiDriver() ComplianceDriver
