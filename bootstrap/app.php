@@ -14,6 +14,9 @@ return Application::configure(basePath: dirname(__DIR__))
         // todo: better way?
         // safe on render because load balancer is the only way to access container
         $middleware->trustProxies(at: '*');
+        $middleware->web(append: [
+            \App\Http\Middleware\HandleInertiaRequests::class,
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //
