@@ -18,8 +18,11 @@ class StreamTransactions extends Command
         $this->info("Sentinel-L7: Monitoring layers" . ($limit > 0 ? " (Limit: $limit)" : ""));
 
         foreach ($stream->generate() as $transaction) {
-            $stream->publish($transaction);
-            $this->line("<fg=cyan>Streamed:</> {$transaction['merchant']} | {$transaction['amount']}");
+            if ($stream->publish($transaction)) {
+                $this->line("<fg=cyan>Streamed:</> {$transaction['merchant']} | {$transaction['amount']}");
+            } else {
+                $this->warn("Duplicate skipped: {$transaction['id']}");
+            }
             $count++;
 
             // Exit if limit is reached (0 means infinite)

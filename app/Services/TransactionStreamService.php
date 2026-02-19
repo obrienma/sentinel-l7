@@ -25,11 +25,25 @@ class TransactionStreamService
         }
     }
 
-    public function publish(array $data): void
+    /**
+     * Publish a transaction to the stream, skipping duplicates via a 24h idempotency key.
+     *
+     * @return bool True if published, false if duplicate.
+     */
+    public function publish(array $data): bool
     {
+        // Use Redis SETNX (Set if Not Exists) as a 24-hour idempotency key
+        $isNew = LRedis::set("idemp:{$data['id']}", 'processed', 'EX', 86400, 'NX');
+
+        if (!$isNew) {
+            return false;
+        }
+
         LRedis::executeRaw([
             'XADD', self::STREAM_KEY, 'MAXLEN', '~', self::STREAM_MAXLEN, '*', 'data', json_encode($data)
         ]);
+
+        return true;
     }
 
     /**

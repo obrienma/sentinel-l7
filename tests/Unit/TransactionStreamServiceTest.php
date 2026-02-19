@@ -45,19 +45,38 @@ it('generates amounts within the expected range', function () {
     }
 });
 
-it('publishes a transaction as an XADD command', function () {
+it('publishes a new transaction and returns true', function () {
+    LRedis::shouldReceive('set')
+        ->once()
+        ->with('idemp:abc-123', 'processed', 'EX', 86400, 'NX')
+        ->andReturn(true);
+
     LRedis::shouldReceive('executeRaw')
         ->once()
         ->with(Mockery::on(function ($args) {
             return $args[0] === 'XADD'
-                && $args[1] === 'transactions'
-                && $args[2] === 'MAXLEN'
-                && str_contains($args[5], '*');
+                && $args[1] === 'transactions';
         }))
         ->andReturn('1-0');
 
     $service = new TransactionStreamService();
-    $service->publish(['merchant' => 'Costco', 'amount' => 9.99]);
+    $result = $service->publish(['id' => 'abc-123', 'merchant' => 'Costco', 'amount' => 9.99]);
+
+    expect($result)->toBeTrue();
+});
+
+it('rejects a duplicate transaction and returns false', function () {
+    LRedis::shouldReceive('set')
+        ->once()
+        ->with('idemp:abc-123', 'processed', 'EX', 86400, 'NX')
+        ->andReturn(false);
+
+    LRedis::shouldNotReceive('executeRaw');
+
+    $service = new TransactionStreamService();
+    $result = $service->publish(['id' => 'abc-123', 'merchant' => 'Costco', 'amount' => 9.99]);
+
+    expect($result)->toBeFalse();
 });
 
 it('returns an empty array when the stream has no messages', function () {
