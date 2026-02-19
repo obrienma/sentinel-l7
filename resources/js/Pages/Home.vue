@@ -1,10 +1,21 @@
 <script setup>
-import { Head } from '@inertiajs/vue3';
+import { Head, useForm, usePage } from '@inertiajs/vue3';
+import { computed } from 'vue';
 
 defineProps({
     launchDate: String,
     appName: String
 });
+
+const form = useForm({ email: '' });
+const success = computed(() => usePage().props.flash?.success);
+
+function submit() {
+    form.post('/signup', {
+        preserveScroll: true,
+        onSuccess: () => form.reset(),
+    });
+}
 </script>
 
 <template>
@@ -37,14 +48,29 @@ defineProps({
                 <h2 class="text-2xl font-semibold mb-2">Coming Soon</h2>
                 <p class="text-slate-500 text-sm mb-6">System initialization in progress...</p>
 
-                <form @submit.prevent="" class="flex flex-col md:flex-row gap-3">
-                    <input
-                        type="email"
-                        placeholder="Enter email for early access"
-                        class="bg-slate-800 border-none rounded-lg px-4 py-3 w-full md:w-72 focus:ring-2 focus:ring-blue-500"
-                    />
-                    <button class="bg-blue-600 hover:bg-blue-500 transition-colors px-6 py-3 rounded-lg font-bold">
-                        Secure Spot
+                <div v-if="success" class="text-green-400 text-sm mb-4">
+                    {{ success }}
+                </div>
+
+                <form @submit.prevent="submit" class="flex flex-col md:flex-row gap-3">
+                    <div class="flex flex-col w-full md:w-72">
+                        <input
+                            v-model="form.email"
+                            type="email"
+                            placeholder="Enter email for early access"
+                            :disabled="form.processing"
+                            class="bg-slate-800 border-none rounded-lg px-4 py-3 w-full focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+                        />
+                        <span v-if="form.errors.email" class="text-red-400 text-xs mt-1 text-left">
+                            {{ form.errors.email }}
+                        </span>
+                    </div>
+                    <button
+                        type="submit"
+                        :disabled="form.processing"
+                        class="bg-blue-600 hover:bg-blue-500 transition-colors px-6 py-3 rounded-lg font-bold disabled:opacity-50"
+                    >
+                        {{ form.processing ? 'Securing...' : 'Secure Spot' }}
                     </button>
                 </form>
             </div>
