@@ -34,5 +34,13 @@ return [
             'channel' => env('SLACK_BOT_USER_DEFAULT_CHANNEL'),
         ],
     ],
-
+    'upstash_vector' => [
+        'url' => env('UPSTASH_VECTOR_REST_URL'),
+        'token' => env('UPSTASH_VECTOR_REST_TOKEN'),
+        'dimension' => 768, // Gemini embedding dimension
+        'similarity_threshold' => env('UPSTASH_VECTOR_THRESHOLD', 0.95),
+    ],
+    'gemini' => [
+        'api_key' => env('GEMINI_API_KEY'),
+    ],
 ];

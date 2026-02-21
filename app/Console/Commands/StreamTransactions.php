@@ -19,7 +19,7 @@ class StreamTransactions extends Command
 
         foreach ($stream->generate() as $transaction) {
             if ($stream->publish($transaction)) {
-                $this->line("<fg=cyan>Streamed:</> {$transaction['merchant']} | {$transaction['amount']}");
+                $this->line("<fg=cyan>Streamed:</> [{$transaction['id']}] {$transaction['merchant']} | {$transaction['currency']} {$transaction['amount']}");
             } else {
                 $this->warn("Duplicate skipped: {$transaction['id']}");
             }
