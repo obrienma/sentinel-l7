@@ -1,5 +1,5 @@
 <script setup>
-import { Head, useForm, usePage } from '@inertiajs/vue3';
+import { Head, Link, useForm, usePage } from '@inertiajs/vue3';
 import { computed } from 'vue';
 
 defineProps({
@@ -9,6 +9,14 @@ defineProps({
 
 const form = useForm({ email: '' });
 const success = computed(() => usePage().props.flash?.success);
+const features = computed(() => usePage().props.features ?? {});
+const appEnv = computed(() => features.value.app_env ?? 'production');
+
+const envBadgeStyle = computed(() => {
+    if (appEnv.value === 'local')   return 'bg-amber-500/10 border-amber-500/30 text-amber-400 shadow-amber-500/10';
+    if (appEnv.value === 'staging') return 'bg-orange-500/10 border-orange-500/30 text-orange-400 shadow-orange-500/10';
+    return 'bg-blue-500/10 border-blue-500/30 text-blue-400';
+});
 
 function submit() {
     form.post('/signup', {
@@ -23,6 +31,23 @@ function submit() {
 
     <div class="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-white p-6 relative overflow-hidden">
         <div class="absolute top-0 left-1/2 -translate-x-1/2 w-full h-full bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-blue-900/20 via-transparent to-transparent opacity-50"></div>
+
+        <!-- Environment badge — feature-flagged, non-production only -->
+        <Transition
+            enter-active-class="transition duration-500 ease-out"
+            enter-from-class="opacity-0 translate-y-1"
+            enter-to-class="opacity-100 translate-y-0"
+        >
+            <div
+                v-if="features.env_badge"
+                :class="['fixed top-4 right-4 z-50 flex items-center gap-2 px-3 py-1.5 rounded-full border text-[11px] font-mono uppercase tracking-widest shadow-lg', envBadgeStyle]"
+            >
+                <span class="w-1.5 h-1.5 rounded-full animate-pulse"
+                      :class="{ 'bg-amber-400': appEnv === 'local', 'bg-orange-400': appEnv === 'staging', 'bg-blue-400': !['local','staging'].includes(appEnv) }"
+                ></span>
+                {{ appEnv }}
+            </div>
+        </Transition>
 
         <main class="z-10 text-center max-w-5xl w-full">
             <div class="mb-8 flex justify-center">
@@ -132,6 +157,30 @@ function submit() {
                     </button>
                 </form>
             </div>
+
+            <!-- Dashboard CTA — feature-flagged, non-production only -->
+            <Transition
+                enter-active-class="transition duration-700 ease-out delay-150"
+                enter-from-class="opacity-0 translate-y-2"
+                enter-to-class="opacity-100 translate-y-0"
+            >
+                <div v-if="features.dashboard_access" class="mt-6">
+                    <div class="relative group inline-block">
+                        <div class="absolute -inset-0.5 bg-gradient-to-r from-blue-600 to-cyan-500 rounded-xl blur opacity-20 group-hover:opacity-50 transition duration-500"></div>
+                        <Link
+                            href="/dashboard"
+                            class="relative flex items-center justify-center gap-2.5 bg-slate-900 border border-slate-700/80 hover:border-blue-500/50 text-slate-300 hover:text-white transition-all duration-300 px-7 py-3 rounded-xl font-semibold text-sm tracking-wide"
+                        >
+                            <svg class="w-4 h-4 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.75">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
+                            </svg>
+                            Access Dashboard
+                            <span class="text-[9px] bg-blue-500/15 border border-blue-500/25 text-blue-400 px-1.5 py-0.5 rounded font-mono tracking-widest">PREVIEW</span>
+                        </Link>
+                    </div>
+                    <p class="text-slate-600 text-xs mt-2 font-mono uppercase tracking-widest">OAuth login required</p>
+                </div>
+            </Transition>
         </main>
 
         <footer class="absolute bottom-8 text-slate-600 text-sm uppercase tracking-widest">

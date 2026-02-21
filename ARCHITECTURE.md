@@ -151,3 +151,5 @@ Watcher:
 | Vector index dimension | Pinned to 1536 via `output_dimensionality` | If index is recreated, dimension must match; update both Upstash index config and `EmbeddingService` |
 | Metrics | Raw Redis counters only | Expose via dashboard endpoint; add percentile tracking |
 | Idempotency | Not exercised by simulator | Wire up to real ingestion path; add test that publishes same UUID twice |
+| Rate Limiting | Volumetric only (fixed tokens per request) | Semantic Rate Limiting: Adjust token cost based on the "intent" or data-value of the request identified by the vector cache. |
+| Feature Gating | Manual `.env` checks | Implement a centralized `FeatureManager` service to handle conditional UI and API route registration. |
