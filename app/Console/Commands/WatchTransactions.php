@@ -7,11 +7,16 @@ use App\Services\TransactionStreamService;
 use App\Services\VectorCacheService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Redis;
 
 class WatchTransactions extends Command
 {
     protected $signature = 'sentinel:watch';
     protected $description = 'Monitor the L7 layer for suspicious activity';
+
+    // Keep the 50 most recent transactions for the live dashboard feed.
+    const FEED_KEY    = 'sentinel:recent_transactions';
+    const FEED_LENGTH = 50;
 
     public function handle(
         TransactionStreamService $stream,
@@ -26,9 +31,9 @@ class WatchTransactions extends Command
                 $startTime = microtime(true);
                 $data = json_decode($streamMsg[1][1], true);
 
-                $txnId   = $data['id'] ?? '?';
+                $txnId    = $data['id'] ?? '?';
                 $merchant = $data['merchant'] ?? $data['merchant_name'] ?? '?';
-                $amount  = isset($data['amount']) ? number_format((float)$data['amount'], 2) : '?';
+                $amount   = isset($data['amount']) ? number_format((float)$data['amount'], 2) : '?';
                 $currency = $data['currency'] ?? '';
 
                 $this->line('');
@@ -46,9 +51,9 @@ class WatchTransactions extends Command
                     if ($cached) {
                         // Cache hit — reuse stored analysis
                         $cachedAnalysis = $cached['metadata']['analysis'];
-                        $score = isset($cached['score']) ? round($cached['score'] * 100, 1) . '%' : 'n/a';
-                        $matchedId = $cached['id'] ?? 'unknown';
-                        $elapsed = round((microtime(true) - $startTime) * 1000, 2);
+                        $score      = isset($cached['score']) ? round($cached['score'] * 100, 1) . '%' : 'n/a';
+                        $matchedId  = $cached['id'] ?? 'unknown';
+                        $elapsed    = round((microtime(true) - $startTime) * 1000, 2);
                         $this->info("✅ Cache hit [{$elapsed}ms] — matched {$matchedId} (similarity: {$score})");
 
                         if ($cachedAnalysis['isThreat']) {
@@ -59,11 +64,12 @@ class WatchTransactions extends Command
                         }
 
                         $this->recordMetric('cache_hit', microtime(true) - $startTime);
+                        $this->recordTransaction($txnId, $merchant, $amount, $currency, $cachedAnalysis['isThreat'], $cachedAnalysis['message'], 'cache_hit');
                         continue;
                     }
 
                     // Cache miss — run full analysis and store result
-                    $result = $analyzer->analyze($data);
+                    $result  = $analyzer->analyze($data);
                     $elapsed = round((microtime(true) - $startTime) * 1000, 2);
                     $this->warn("❌ Cache miss [{$elapsed}ms] — fingerprint: {$fingerprint}");
 
@@ -97,7 +103,10 @@ class WatchTransactions extends Command
                     } else {
                         $this->line($result->message);
                     }
-                    unset($result);
+
+                    $source = isset($e) ? 'fallback' : 'cache_miss';
+                    $this->recordTransaction($txnId, $merchant, $amount, $currency, $result->isThreat, $result->message, $source);
+                    unset($result, $e);
                 }
             }
         }
@@ -107,5 +116,33 @@ class WatchTransactions extends Command
     {
         Cache::increment("sentinel_metrics_{$type}_count");
         Cache::increment("sentinel_metrics_{$type}_time", (int) ($duration * 1000));
+    }
+
+    /**
+     * Push a transaction summary to the Redis feed list and trim to the last FEED_LENGTH entries.
+     * LPUSH prepends (newest first), LTRIM discards entries beyond the limit.
+     */
+    private function recordTransaction(
+        string $txnId,
+        string $merchant,
+        string $amount,
+        string $currency,
+        bool   $isThreat,
+        string $message,
+        string $source,
+    ): void {
+        $entry = json_encode([
+            'id'        => $txnId,
+            'merchant'  => $merchant,
+            'amount'    => $amount,
+            'currency'  => $currency,
+            'is_threat' => $isThreat,
+            'message'   => $message,
+            'source'    => $source,
+            'at'        => now()->toIso8601String(),
+        ]);
+
+        Redis::executeRaw(['LPUSH', self::FEED_KEY, $entry]);
+        Redis::executeRaw(['LTRIM', self::FEED_KEY, 0, self::FEED_LENGTH - 1]);
     }
 }

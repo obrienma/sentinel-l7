@@ -6,6 +6,7 @@ use App\Services\ThreatResult;
 use App\Services\TransactionStreamService;
 use App\Services\VectorCacheService;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Redis as LRedis;
 
 uses(Tests\TestCase::class);
 
@@ -422,6 +423,201 @@ it('handles transactions with missing optional fields gracefully', function () {
     runWatcher($this);
 
     expect(Cache::get('sentinel_metrics_cache_miss_count'))->toBe(1);
+    Mockery::close();
+});
+
+// ─── Transaction feed (Redis list) ───────────────────────────────────────────
+
+it('pushes a transaction entry to the redis feed on a cache hit', function () {
+    $fakeVector = array_fill(0, 1536, 0.1);
+    $lpushPayload = null;
+
+    LRedis::shouldReceive('executeRaw')
+        ->with(Mockery::on(function ($args) use (&$lpushPayload) {
+            if ($args[0] === 'LPUSH') {
+                $lpushPayload = json_decode($args[2], true);
+                return true;
+            }
+            return true; // allow LTRIM through
+        }))
+        ->twice(); // LPUSH + LTRIM
+
+    $embedding = Mockery::mock(EmbeddingService::class);
+    $embedding->shouldReceive('createTransactionFingerprint')->andReturn('fingerprint');
+    $embedding->shouldReceive('embed')->andReturn($fakeVector);
+
+    $vectorCache = Mockery::mock(VectorCacheService::class);
+    $vectorCache->shouldReceive('search')->andReturn([
+        'id'       => 'txn_old',
+        'score'    => 0.97,
+        'metadata' => ['analysis' => ['isThreat' => false, 'message' => 'Layer 7 Clear: Starbucks - OK']],
+    ]);
+
+    $analyzer = Mockery::mock(ThreatAnalysisService::class);
+    $analyzer->shouldNotReceive('analyze');
+
+    $this->app->instance(TransactionStreamService::class, mockStreamWithOneMessage());
+    $this->app->instance(EmbeddingService::class, $embedding);
+    $this->app->instance(VectorCacheService::class, $vectorCache);
+    $this->app->instance(ThreatAnalysisService::class, $analyzer);
+
+    runWatcher($this);
+
+    expect($lpushPayload)->not->toBeNull()
+        ->and($lpushPayload['merchant'])->toBe('Starbucks')
+        ->and($lpushPayload['is_threat'])->toBeFalse()
+        ->and($lpushPayload['source'])->toBe('cache_hit')
+        ->and($lpushPayload)->toHaveKeys(['id', 'merchant', 'amount', 'currency', 'is_threat', 'message', 'source', 'at']);
+    Mockery::close();
+});
+
+it('records is_threat true in the feed for a cached threat', function () {
+    $fakeVector = array_fill(0, 1536, 0.1);
+    $lpushPayload = null;
+
+    LRedis::shouldReceive('executeRaw')
+        ->with(Mockery::on(function ($args) use (&$lpushPayload) {
+            if ($args[0] === 'LPUSH') {
+                $lpushPayload = json_decode($args[2], true);
+            }
+            return true;
+        }))
+        ->twice();
+
+    $embedding = Mockery::mock(EmbeddingService::class);
+    $embedding->shouldReceive('createTransactionFingerprint')->andReturn('fingerprint');
+    $embedding->shouldReceive('embed')->andReturn($fakeVector);
+
+    $vectorCache = Mockery::mock(VectorCacheService::class);
+    $vectorCache->shouldReceive('search')->andReturn([
+        'id'       => 'txn_threat',
+        'score'    => 0.99,
+        'metadata' => ['analysis' => ['isThreat' => true, 'message' => 'High value transaction']],
+    ]);
+
+    $analyzer = Mockery::mock(ThreatAnalysisService::class);
+    $analyzer->shouldNotReceive('analyze');
+
+    $this->app->instance(TransactionStreamService::class, mockStreamWithOneMessage(['amount' => 500.00, 'merchant' => 'BigBank']));
+    $this->app->instance(EmbeddingService::class, $embedding);
+    $this->app->instance(VectorCacheService::class, $vectorCache);
+    $this->app->instance(ThreatAnalysisService::class, $analyzer);
+
+    runWatcher($this);
+
+    expect($lpushPayload['is_threat'])->toBeTrue()
+        ->and($lpushPayload['source'])->toBe('cache_hit')
+        ->and($lpushPayload['merchant'])->toBe('BigBank');
+    Mockery::close();
+});
+
+it('pushes a transaction entry to the redis feed on a cache miss', function () {
+    $fakeVector = array_fill(0, 1536, 0.1);
+    $lpushPayload = null;
+
+    LRedis::shouldReceive('executeRaw')
+        ->with(Mockery::on(function ($args) use (&$lpushPayload) {
+            if ($args[0] === 'LPUSH') {
+                $lpushPayload = json_decode($args[2], true);
+            }
+            return true;
+        }))
+        ->twice();
+
+    $embedding = Mockery::mock(EmbeddingService::class);
+    $embedding->shouldReceive('createTransactionFingerprint')->andReturn('fingerprint');
+    $embedding->shouldReceive('embed')->andReturn($fakeVector);
+
+    $vectorCache = Mockery::mock(VectorCacheService::class);
+    $vectorCache->shouldReceive('search')->andReturn(null);
+    $vectorCache->shouldReceive('upsert')->andReturn(true);
+
+    $analyzer = Mockery::mock(ThreatAnalysisService::class);
+    $analyzer->shouldReceive('analyze')
+        ->andReturn(ThreatResult::clear(['merchant' => 'Starbucks', 'amount' => 12.50]));
+
+    $this->app->instance(TransactionStreamService::class, mockStreamWithOneMessage());
+    $this->app->instance(EmbeddingService::class, $embedding);
+    $this->app->instance(VectorCacheService::class, $vectorCache);
+    $this->app->instance(ThreatAnalysisService::class, $analyzer);
+
+    runWatcher($this);
+
+    expect($lpushPayload['source'])->toBe('cache_miss')
+        ->and($lpushPayload['merchant'])->toBe('Starbucks');
+    Mockery::close();
+});
+
+it('pushes a transaction entry to the redis feed on the fallback path', function () {
+    $lpushPayload = null;
+
+    LRedis::shouldReceive('executeRaw')
+        ->with(Mockery::on(function ($args) use (&$lpushPayload) {
+            if ($args[0] === 'LPUSH') {
+                $lpushPayload = json_decode($args[2], true);
+            }
+            return true;
+        }))
+        ->twice();
+
+    $embedding = Mockery::mock(EmbeddingService::class);
+    $embedding->shouldReceive('createTransactionFingerprint')->andThrow(new \RuntimeException('Bad data'));
+
+    $vectorCache = Mockery::mock(VectorCacheService::class);
+    $vectorCache->shouldNotReceive('search');
+
+    $analyzer = Mockery::mock(ThreatAnalysisService::class);
+    $analyzer->shouldReceive('analyze')
+        ->andReturn(ThreatResult::clear(['merchant' => 'Starbucks', 'amount' => 12.50]));
+
+    $this->app->instance(TransactionStreamService::class, mockStreamWithOneMessage());
+    $this->app->instance(EmbeddingService::class, $embedding);
+    $this->app->instance(VectorCacheService::class, $vectorCache);
+    $this->app->instance(ThreatAnalysisService::class, $analyzer);
+
+    runWatcher($this);
+
+    expect($lpushPayload['source'])->toBe('fallback');
+    Mockery::close();
+});
+
+it('trims the feed list to FEED_LENGTH after each push', function () {
+    $ltrimArgs = null;
+
+    LRedis::shouldReceive('executeRaw')
+        ->with(Mockery::on(function ($args) use (&$ltrimArgs) {
+            if ($args[0] === 'LTRIM') {
+                $ltrimArgs = $args;
+            }
+            return true;
+        }))
+        ->twice();
+
+    $fakeVector = array_fill(0, 1536, 0.1);
+
+    $embedding = Mockery::mock(EmbeddingService::class);
+    $embedding->shouldReceive('createTransactionFingerprint')->andReturn('fingerprint');
+    $embedding->shouldReceive('embed')->andReturn($fakeVector);
+
+    $vectorCache = Mockery::mock(VectorCacheService::class);
+    $vectorCache->shouldReceive('search')->andReturn(null);
+    $vectorCache->shouldReceive('upsert')->andReturn(true);
+
+    $analyzer = Mockery::mock(ThreatAnalysisService::class);
+    $analyzer->shouldReceive('analyze')
+        ->andReturn(ThreatResult::clear(['merchant' => 'Starbucks', 'amount' => 12.50]));
+
+    $this->app->instance(TransactionStreamService::class, mockStreamWithOneMessage());
+    $this->app->instance(EmbeddingService::class, $embedding);
+    $this->app->instance(VectorCacheService::class, $vectorCache);
+    $this->app->instance(ThreatAnalysisService::class, $analyzer);
+
+    runWatcher($this);
+
+    expect($ltrimArgs[0])->toBe('LTRIM')
+        ->and($ltrimArgs[1])->toBe('sentinel:recent_transactions')
+        ->and($ltrimArgs[2])->toBe(0)
+        ->and($ltrimArgs[3])->toBe(49); // FEED_LENGTH - 1
     Mockery::close();
 });
 

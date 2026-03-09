@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Redis;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -16,8 +17,18 @@ class DashboardController extends Controller
                 'name'  => auth()->user()->name,
                 'email' => auth()->user()->email,
             ],
-            'metrics' => $this->metrics(),
+            'metrics'      => $this->metrics(),
+            'recentTxns'   => $this->recentTransactions(),
         ]);
+    }
+
+    private function recentTransactions(): array
+    {
+        // LRANGE returns up to 20 most recent entries (newest first).
+        // Each entry is a JSON string — decode into an array for Inertia.
+        $raw = Redis::executeRaw(['LRANGE', 'sentinel:recent_transactions', 0, 19]);
+
+        return array_map(fn($item) => json_decode($item, true), $raw ?? []);
     }
 
     private function metrics(): array

@@ -164,16 +164,39 @@ XREAD from stream
   (any exception) → ThreatAnalysisService::analyze() directly + recordMetric('fallback')
 ```
 
-**Metrics** are stored in Laravel's cache (backed by Redis in production):
+**Metrics** are stored in Laravel's cache (backed by Upstash Redis via `CACHE_STORE=redis`):
 
 ```
 sentinel_metrics_cache_hit_count
 sentinel_metrics_cache_miss_count
 sentinel_metrics_fallback_count
+sentinel_metrics_threat_count
 sentinel_metrics_cache_hit_time    (ms, accumulated)
 sentinel_metrics_cache_miss_time
 sentinel_metrics_fallback_time
 ```
+
+**Transaction feed** — after every transaction, a JSON summary is pushed to a Redis list:
+
+```
+sentinel:recent_transactions   (LPUSH, capped at 50 via LTRIM)
+```
+
+Each entry:
+```json
+{
+  "id": "txn_abc123",
+  "merchant": "COSTCO",
+  "amount": "499.00",
+  "currency": "USD",
+  "is_threat": true,
+  "message": "High value transaction at COSTCO ($499.00)",
+  "source": "cache_hit | cache_miss | fallback",
+  "at": "2026-03-09T14:32:00+00:00"
+}
+```
+
+`DashboardController` reads this list via `LRANGE sentinel:recent_transactions 0 19` and passes it to the React dashboard as `recentTxns`.
 
 > **Note:** `sentinel:watch` uses `XREAD` (no consumer group). The planned `sentinel:consume` command will use `XREADGROUP` + `XACK` for fault-tolerant at-least-once delivery with a reclaimer process. See [ARCHITECTURE.md](ARCHITECTURE.md).
 
