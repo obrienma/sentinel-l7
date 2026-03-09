@@ -1,34 +1,23 @@
 import './bootstrap';
 import '../css/app.css';
 
-import { createApp, h } from 'vue';
-import { createInertiaApp } from '@inertiajs/vue3';
+import React from 'react';
+import { createRoot } from 'react-dom/client';
+import { createInertiaApp } from '@inertiajs/react';
 import { resolvePageComponent } from 'laravel-vite-plugin/inertia-helpers';
 
 const appName = import.meta.env.VITE_APP_NAME || 'Laravel';
 
 createInertiaApp({
     title: (title) => `${title} - ${appName}`,
-
     resolve: (name) => resolvePageComponent(
-        `./Pages/${name}.vue`,
-        import.meta.glob('./Pages/**/*.vue', { eager: true })
+        `./Pages/${name}.jsx`,
+        import.meta.glob('./Pages/**/*.jsx', { eager: true })
     ),
-    setup({ el, App, props, plugin }) {
-        return createApp({ render: () => h(App, props) })
-            .use(plugin)
-            .mount(el);
+    setup({ el, App, props }) {
+        createRoot(el).render(React.createElement(App, props));
     },
     progress: {
         color: '#4B5563',
     },
 });
-
-
-createInertiaApp({
-  resolve: (name) => {
-    const pages = import.meta.glob('./Pages/**/*.vue', { eager: true })
-    return pages[`./Pages/${name}.vue`]
-  },
-  // ...
-})
