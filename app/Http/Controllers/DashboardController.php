@@ -25,6 +25,7 @@ class DashboardController extends Controller
         $hits      = (int) Cache::get('sentinel_metrics_cache_hit_count', 0);
         $misses    = (int) Cache::get('sentinel_metrics_cache_miss_count', 0);
         $fallbacks = (int) Cache::get('sentinel_metrics_fallback_count', 0);
+        $threats   = (int) Cache::get('sentinel_metrics_threat_count', 0);
         $total     = $hits + $misses + $fallbacks;
 
         return [
@@ -32,6 +33,7 @@ class DashboardController extends Controller
             'hits'      => $hits,
             'misses'    => $misses,
             'fallbacks' => $fallbacks,
+            'threats'   => $threats,
             'hit_rate'  => $total > 0 ? round(($hits / $total) * 100) . '%' : null,
         ];
     }

@@ -53,7 +53,7 @@ class WatchTransactions extends Command
 
                         if ($cachedAnalysis['isThreat']) {
                             $this->error("!!! THREAT DETECTED (cached): {$cachedAnalysis['message']}");
-                            // todo: Trigger an Inertia Event or Broadcast to dashboard
+                            Cache::increment('sentinel_metrics_threat_count');
                         } else {
                             $this->line($cachedAnalysis['message']);
                         }
@@ -93,7 +93,7 @@ class WatchTransactions extends Command
                 if (isset($result)) {
                     if ($result->isThreat) {
                         $this->error("!!! THREAT DETECTED: {$result->message}");
-                        // todo: Trigger an Inertia Event or Broadcast to dashboard
+                        Cache::increment('sentinel_metrics_threat_count');
                     } else {
                         $this->line($result->message);
                     }

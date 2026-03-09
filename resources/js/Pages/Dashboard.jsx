@@ -8,6 +8,7 @@ import AppLayout from '@/components/AppLayout';
 export default function Dashboard({ user, metrics = {} }) {
     const {
         total    = 0,
+        threats  = 0,
         hit_rate = null,
     } = metrics;
 
@@ -34,7 +35,7 @@ export default function Dashboard({ user, metrics = {} }) {
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <StatCard label="Transactions Processed" value={total || '—'} />
-                <StatCard label="Flags Raised" value="—" />
+                <StatCard label="Flags Raised" value={threats || '—'} />
                 <StatCard label="Cache Hit Rate" value={hit_rate ?? '—'} />
             </div>
         </AppLayout>
