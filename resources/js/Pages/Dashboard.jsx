@@ -1,4 +1,5 @@
-import { Head } from '@inertiajs/react';
+import { useEffect } from 'react';
+import { Head, router } from '@inertiajs/react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import AppLayout from '@/components/AppLayout';
 
@@ -6,9 +7,21 @@ import AppLayout from '@/components/AppLayout';
 // Destructuring with defaults means the page still renders if metrics are missing.
 export default function Dashboard({ user, metrics = {} }) {
     const {
-        total     = 0,
-        hit_rate  = null,
+        total    = 0,
+        hit_rate = null,
     } = metrics;
+
+    // Poll for fresh metrics every 3 seconds.
+    // `router.reload({ only: ['metrics'] })` is an Inertia partial reload —
+    // it re-runs the controller but only swaps the `metrics` prop, leaving
+    // everything else (user, layout) untouched. No full page reload.
+    useEffect(() => {
+        const id = setInterval(() => {
+            router.reload({ only: ['metrics'] });
+        }, 3000);
+
+        return () => clearInterval(id); // stop polling when component unmounts
+    }, []); // [] = run once on mount, not on every render
 
     return (
         <AppLayout user={user}>
