@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(xargs ls -lah)",
+      "Bash(xargs cat)",
+      "Bash(node --version)",
+      "Bash(npm info @inertiajs/react version)",
+      "Bash(npm info @vitejs/plugin-react version)",
+      "Bash(npm info lucide-react version)",
+      "Bash(npm info react version)",
+      "Bash(npm info react-dom version)",
+      "Bash(source ~/.nvm/nvm.sh)",
+      "Bash(nvm use 24)",
+      "Bash(npm run build)"
+    ]
+  }
+}

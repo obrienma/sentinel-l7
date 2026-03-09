@@ -2,7 +2,7 @@
 
 [Sentinel-L7 Early Access](https://sentinel-l7.cyberrhizome.ca/)
 
-**A high-performance monitoring system for Finance/Medical/SaaS.** Built with **Laravel 12**, **Inertia.js**, **Vue3**,  **Upstash Redis/Vector**, and **Gemini 3 Flash**.
+**A high-performance monitoring system for Finance/Medical/SaaS.** Built with **Laravel 12**, **Inertia.js**, **React 19 + shadcn/ui**, **Upstash Redis/Vector**, and **Gemini 3 Flash**.
 Sentinel-L7 does not monitor infrastructure; it monitors **Business Intent**.
 
 ---
@@ -19,7 +19,7 @@ Demonstrates production patterns for semantic caching, fault-tolerant message pr
 While the demo focuses on compliance use cases, the core patterns apply to any high-volume API platform:
 
 - **Semantic Caching**: Reduce LLM API costs by 80%+ using vector similarity
-- **Async Processing**: Redis Streams handle traffic spikes without blockinggit
+- **Async Processing**: Redis Streams handle traffic spikes without blocking
 - **Fault Tolerance**: Zero message loss with XCLAIM recovery
 - **API Gateway Patterns**: Service layer abstraction for swappable backends
 - **Rate Limiting**: Token bucket implementation per tenant
@@ -82,7 +82,7 @@ The stream consumer implements **token bucket** rate limiting per tenant:
 ## 🛠️ Stack & Showcase
 
 - **Backend:** Laravel 12 (Service Manager Pattern, Redis Streams, Custom Artisan Daemons)
-- **Frontend:** Inertia.js + Vue 3 (Real-time anomaly feed)
+- **Frontend:** Inertia.js + React 19 + shadcn/ui (Real-time anomaly feed)
 - **DevOps:** Render Blueprints (Infrastructure as Code)
 - **Testing:** Pest Architecture testing (Domain isolation)
 
@@ -105,7 +105,7 @@ graph TB
     end
 
     subgraph "2. Infrastructure (Render)"
-        Web[Web Dashboard - Inertia/Vue]
+        Web[Web Dashboard - Inertia/React]
         Worker[Sentinel Consumer - PHP]
         Reclaimer[Safety Reclaimer - PHP]
     end
