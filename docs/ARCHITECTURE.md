@@ -7,8 +7,10 @@ Sentinel-L7 is a multi-process Laravel application. Three processes run concurre
 | Process | Command | Role |
 |---------|---------|------|
 | Web | `php artisan serve` | Inertia/React dashboard, API endpoints |
-| Worker | `php artisan sentinel:consume` | Redis Stream consumer — reads, analyzes, acks |
-| Reclaimer | `php artisan sentinel:reclaim` | XCLAIM recovery for zombie messages |
+| Worker | `php artisan sentinel:watch` | Redis Stream consumer — reads, embeds, caches, analyzes |
+| Reclaimer | `php artisan sentinel:reclaim` | XCLAIM recovery for zombie messages (planned) |
+
+> **Current vs planned:** `sentinel:watch` uses `XREAD` (simple). The planned `sentinel:consume` will use `XREADGROUP` + `XACK` for consumer group fault tolerance. See [SERVICES.md](SERVICES.md#watchtransactions-sentinelwatch).
 
 ```
 ┌──────────────────────────────────────────────────────────┐
@@ -113,3 +115,5 @@ The different thresholds are intentional. Transaction caching needs precision; p
 - **Tailwind v4** — config in CSS (`@theme`, `@theme inline`), no `tailwind.config.js`.
 
 See [diagrams/SYSTEM_ARCHITECTURE.md](diagrams/SYSTEM_ARCHITECTURE.md) for Mermaid diagrams.
+
+For detailed service API docs and usage examples, see [SERVICES.md](SERVICES.md).

@@ -35,4 +35,19 @@ return [
         ],
     ],
 
+    'upstash_vector' => [
+        'url'                  => env('UPSTASH_VECTOR_REST_URL'),
+        'token'                => env('UPSTASH_VECTOR_REST_TOKEN'),
+        'dimension'            => 1536, // Gemini embedding-001 output_dimensionality
+        'similarity_threshold' => env('UPSTASH_VECTOR_THRESHOLD', 0.95),
+    ],
+
+    'gemini' => [
+        'api_key'       => env('GEMINI_API_KEY'),
+        'embedding_url' => env(
+            'GEMINI_EMBEDDING_URL',
+            'https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent'
+        ),
+    ],
+
 ];

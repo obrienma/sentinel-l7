@@ -126,8 +126,24 @@ props.flash.success   // flash success message
 props.flash.error     // flash error message
 ```
 
-## TODO: Layout Shell
+## Layout Shell
 
-> A shared layout component (`AppLayout`) wrapping all authenticated pages is planned.
-> It will include: sidebar navigation, top bar with user info/logout, flash message display.
-> Once created, pages inside the auth group will use it instead of repeating the header markup.
+`resources/js/components/AppLayout.jsx` wraps all authenticated pages.
+
+- Top bar: logo, user email, sign out
+- Sidebar: nav links with active state highlight; disabled items render as `<span>` (coming soon)
+- `children` prop: page content renders in `<main>`
+
+Usage:
+```jsx
+export default function MyPage({ user }) {
+    return (
+        <AppLayout user={user}>
+            <Head title="My Page" />
+            {/* page content */}
+        </AppLayout>
+    );
+}
+```
+
+Flash message display is a future addition to AppLayout.
