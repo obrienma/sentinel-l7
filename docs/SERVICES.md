@@ -143,60 +143,101 @@ ThreatResult::clear($transaction)             // isThreat = false
 
 ---
 
+## TransactionProcessorService
+
+**File:** `app/Services/TransactionProcessorService.php`
+
+The core per-transaction compliance pipeline, extracted so it can be called from both the `sentinel:watch` daemon and the `ProcessStreamJob` queue job (triggered by the dashboard "Run Transactions" button).
+
+### `process(array $data): array`
+
+Runs a single transaction through the full pipeline:
+
+```
+embed() → VectorCacheService::search()
+  ├─ Hit  → reuse cached analysis  → recordMetric('cache_hit')  → recordTransaction()  → return
+  └─ Miss → ThreatAnalysisService::analyze()
+             → VectorCacheService::upsert()
+             → recordMetric('cache_miss')
+(any Throwable) → ThreatAnalysisService::analyze() directly
+                  → recordMetric('fallback')
+
+→ recordTransaction()   (miss + fallback paths)
+→ Cache::increment('sentinel_metrics_threat_count')  (if isThreat)
+```
+
+Returns a summary array — useful for CLI output or logging; safe to ignore in queued jobs:
+
+```php
+[
+    'source'     => 'cache_hit' | 'cache_miss' | 'fallback',
+    'is_threat'  => bool,
+    'message'    => string,
+    'elapsed_ms' => float,
+]
+```
+
+**Side effects (always):**
+- Writes metric counters to Laravel cache (Upstash Redis)
+- Pushes a JSON entry to `sentinel:recent_transactions` (Redis list, capped at 50)
+
+**Error handling:** A `\Throwable` in the embed/vector path triggers the fallback. The fallback itself is not caught — if `ThreatAnalysisService` also fails, the exception propagates to the caller (queue worker or daemon loop).
+
+**Note on two exit points:** Cache hits return early after `recordTransaction`. Miss/fallback paths fall through to a shared `recordTransaction` + threat increment at the bottom. Keep this in mind when modifying — a side effect added in one path must be considered for the other.
+
+---
+
+## ProcessStreamJob
+
+**File:** `app/Jobs/ProcessStreamJob.php`
+
+A finite, dispatchable version of the compliance pipeline. Receives transaction data directly (not from the Redis stream) and calls `TransactionProcessorService::process()`.
+
+Dispatched by `StreamTransactionsJob` after each `publish()` call — one job per transaction. Because both jobs share the same queue, they are processed FIFO.
+
+```php
+// Dispatched internally by StreamTransactionsJob
+ProcessStreamJob::dispatch($transactionArray);
+```
+
+This is the job that makes the dashboard "Run Transactions" button self-contained — no need for `sentinel:watch` to be running.
+
+---
+
+## StreamTransactionsJob
+
+**File:** `app/Jobs/StreamTransactionsJob.php`
+
+Generates N fake transactions, publishes each to the Redis stream via `TransactionStreamService::publish()`, and processes each inline via `TransactionProcessorService::process()` — all within a single queue job execution.
+
+```php
+StreamTransactionsJob::dispatch(10);  // publish + process 10 txns in one job
+```
+
+Dispatched from `DashboardController::stream()` via `POST /dashboard/stream`.
+
+> **Note:** Processing inline (rather than dispatching N separate `ProcessStreamJob` instances) avoids queue round-trip overhead per transaction. `ProcessStreamJob` still exists for cases where a single transaction needs to be dispatched independently.
+
+---
+
 ## WatchTransactions (`sentinel:watch`)
 
 **File:** `app/Console/Commands/WatchTransactions.php`
 **Run:** `php artisan sentinel:watch`
 
-The current stream consumer. Reads from the Redis stream and runs each transaction through the embedding + vector cache pipeline, falling back to `ThreatAnalysisService` if the vector path fails.
+The always-on stream consumer daemon. Reads transactions from the Redis stream in a blocking loop and delegates each one to `TransactionProcessorService::process()` — it owns no pipeline logic of its own.
 
-**Flow per transaction:**
-
-```
-XREAD from stream
-  → createTransactionFingerprint()
-  → embed() → vector
-  → VectorCacheService::search()
-      ├─ Hit  → reuse cached analysis + recordMetric('cache_hit')
-      └─ Miss → ThreatAnalysisService::analyze()
-                 → VectorCacheService::upsert()
-                 → recordMetric('cache_miss')
-  (any exception) → ThreatAnalysisService::analyze() directly + recordMetric('fallback')
-```
-
-**Metrics** are stored in Laravel's cache (backed by Upstash Redis via `CACHE_STORE=redis`):
+**Flow:**
 
 ```
-sentinel_metrics_cache_hit_count
-sentinel_metrics_cache_miss_count
-sentinel_metrics_fallback_count
-sentinel_metrics_threat_count
-sentinel_metrics_cache_hit_time    (ms, accumulated)
-sentinel_metrics_cache_miss_time
-sentinel_metrics_fallback_time
-```
-
-**Transaction feed** — after every transaction, a JSON summary is pushed to a Redis list:
-
-```
-sentinel:recent_transactions   (LPUSH, capped at 50 via LTRIM)
-```
-
-Each entry:
-```json
-{
-  "id": "txn_abc123",
-  "merchant": "COSTCO",
-  "amount": "499.00",
-  "currency": "USD",
-  "is_threat": true,
-  "message": "High value transaction at COSTCO ($499.00)",
-  "source": "cache_hit | cache_miss | fallback",
-  "at": "2026-03-09T14:32:00+00:00"
+while (true) {
+  XREAD from stream
+    → TransactionProcessorService::process($data)
+    → format result for CLI output (match on source)
 }
 ```
 
-`DashboardController` reads this list via `LRANGE sentinel:recent_transactions 0 19` and passes it to the React dashboard as `recentTxns`.
+`WatchTransactions` is responsible only for reading from the stream and formatting terminal output. All pipeline logic (embed → vector search → analyze → record metrics → record feed) lives in `TransactionProcessorService`. See that section above for the full flow.
 
 > **Note:** `sentinel:watch` uses `XREAD` (no consumer group). The planned `sentinel:consume` command will use `XREADGROUP` + `XACK` for fault-tolerant at-least-once delivery with a reclaimer process. See [ARCHITECTURE.md](ARCHITECTURE.md).
 

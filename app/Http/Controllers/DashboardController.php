@@ -27,7 +27,7 @@ class DashboardController extends Controller
     {
         StreamTransactionsJob::dispatch(10);
 
-        return redirect()->route('dashboard')->with('success', '10 transactions queued.');
+        return redirect()->route('dashboard')->with('success', 'Streaming 10 transactions through the compliance pipeline.');
     }
 
     private function recentTransactions(): array
