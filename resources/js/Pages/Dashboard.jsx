@@ -1,15 +1,18 @@
-import { useEffect } from 'react';
-import { Head, router } from '@inertiajs/react';
+import { useEffect, useState } from 'react';
+import { Head, router, usePage } from '@inertiajs/react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import AppLayout from '@/components/AppLayout';
 
-export default function Dashboard({ user, metrics = {}, recentTxns = [] }) {
+export default function Dashboard({ user, metrics = {}, recentTxns = [], flash = {} }) {
     const {
         total    = 0,
         threats  = 0,
         hit_rate = null,
     } = metrics;
+
+    const [streaming, setStreaming] = useState(false);
 
     // Partial reload — refreshes metrics and the transaction feed, leaves layout alone.
     useEffect(() => {
@@ -20,14 +23,34 @@ export default function Dashboard({ user, metrics = {}, recentTxns = [] }) {
         return () => clearInterval(id);
     }, []);
 
+    function runTransactions() {
+        setStreaming(true);
+        router.post('/dashboard/stream', {}, {
+            onFinish: () => setStreaming(false),
+        });
+    }
+
     return (
         <AppLayout user={user}>
             <Head title="Dashboard" />
 
-            <div className="mb-6">
-                <h2 className="text-2xl font-bold">Overview</h2>
-                <p className="text-slate-400 text-sm mt-1">Compliance monitoring — real-time</p>
+            <div className="flex items-center justify-between mb-6">
+                <div>
+                    <h2 className="text-2xl font-bold">Overview</h2>
+                    <p className="text-slate-400 text-sm mt-1">Compliance monitoring — real-time</p>
+                </div>
+                <Button
+                    onClick={runTransactions}
+                    disabled={streaming}
+                    className="bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50"
+                >
+                    {streaming ? 'Queuing…' : 'Run Transactions'}
+                </Button>
             </div>
+
+            {flash?.success && (
+                <p className="text-emerald-400 text-sm mb-4">{flash.success}</p>
+            )}
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
                 <StatCard label="Transactions Processed" value={total || '—'} />
@@ -93,12 +116,10 @@ function TransactionFeed({ transactions }) {
 }
 
 function TransactionRow({ txn }) {
-    // Format the ISO timestamp to a readable local time
     const time = txn.at ? new Date(txn.at).toLocaleTimeString() : '—';
 
     return (
         <li className="flex items-center justify-between px-6 py-3 hover:bg-slate-800/40 transition-colors">
-            {/* Left: merchant + amount */}
             <div className="flex flex-col min-w-0">
                 <span className="font-medium text-sm truncate">{txn.merchant}</span>
                 <span className="text-xs text-slate-400">
@@ -106,7 +127,6 @@ function TransactionRow({ txn }) {
                 </span>
             </div>
 
-            {/* Right: threat badge + source */}
             <div className="flex items-center gap-3 ml-4 shrink-0">
                 <span className="text-xs text-slate-600">{SOURCE_LABEL[txn.source] ?? txn.source}</span>
                 {txn.is_threat ? (

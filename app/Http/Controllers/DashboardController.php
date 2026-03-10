@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Jobs\StreamTransactionsJob;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Redis;
 use Inertia\Inertia;
@@ -20,6 +21,13 @@ class DashboardController extends Controller
             'metrics'      => $this->metrics(),
             'recentTxns'   => $this->recentTransactions(),
         ]);
+    }
+
+    public function stream(): \Illuminate\Http\RedirectResponse
+    {
+        StreamTransactionsJob::dispatch(10);
+
+        return redirect()->route('dashboard')->with('success', '10 transactions queued.');
     }
 
     private function recentTransactions(): array

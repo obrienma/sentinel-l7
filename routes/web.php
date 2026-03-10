@@ -21,4 +21,5 @@ Route::post('/logout', [AuthController::class, 'logout'])->name('logout')->middl
 // TODO: add tenant scoping middleware here when multitenancy is implemented
 Route::middleware('auth')->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
+    Route::post('/dashboard/stream', [DashboardController::class, 'stream'])->name('dashboard.stream');
 });

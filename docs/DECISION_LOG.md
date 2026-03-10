@@ -87,6 +87,24 @@ Maintained as we build so future contributors (and future us) understand the *wh
 
 ---
 
+### Neon PostgreSQL: Non-pooled host for queue worker (and all local dev)
+**Decision:** `DB_HOST` in `.env` points to the non-pooled Neon endpoint (`ep-dawn-meadow-ak4c8qgt.c-3.us-west-2.aws.neon.tech`), not the PgBouncer pooler endpoint (`-pooler.`).
+
+**Rationale:** Neon's connection pooler runs PgBouncer in **transaction mode**. This strips support for `SELECT ... FOR UPDATE SKIP LOCKED`, which is exactly how Laravel's database queue driver atomically claims jobs. The result is a silent transaction abort (`25P02`) every time the queue worker tries to reserve a job.
+
+**Symptoms observed:**
+- `SQLSTATE[25P02]: In failed sql transaction` on `update "jobs" set "reserved_at" = ...`
+- The queue worker retried endlessly but never successfully processed a job.
+
+**Trade-offs:**
+- Non-pooled connections are direct to Postgres; Neon free tier allows ~5 direct connections. For local dev (1 web process + 1 queue worker = 2 connections) this is not a concern.
+- In production on Railway, `DB_HOST` is set via Railway's env dashboard — this `.env` value is irrelevant there. Configure accordingly.
+- The pooler is still the correct choice for the web process under high concurrency; if this ever becomes a concern, override `DB_HOST` per-process rather than globally.
+
+**The non-pooled host also required for:** `php artisan migrate` (documented in `.env` comment since before this decision).
+
+---
+
 ### Inertia.js: Entry file uses `React.createElement` not JSX
 **Decision:** `resources/js/app.js` uses `React.createElement(App, props)` instead of `<App {...props} />`.
 
