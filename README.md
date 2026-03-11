@@ -1,100 +1,68 @@
-# Sentinel-L7 | AI-Driven Observability Engine
+# Sentinel-L7
 
-[Sentinel-L7 Early Access](https://sentinel-l7.cyberrhizome.ca/)
+A multi-process Laravel application built to explore production patterns for async message processing, semantic caching, and fault-tolerant distributed systems — using a financial compliance engine as the domain.
 
-**A high-performance monitoring system for Finance/Medical/SaaS.** Built with **Laravel 12**, **Inertia.js**, **React 19 + shadcn/ui**, **Upstash Redis/Vector**, and **Gemini 3 Flash**.
-Sentinel-L7 does not monitor infrastructure; it monitors **Business Intent**.
-
----
-
-## 🎯 Status
-
-**Core Architecture: Complete**
-
-Demonstrates production patterns for semantic caching, fault-tolerant message processing, and async API workflows. Actively expanding feature coverage.
-
----
-## 💡 Why This Matters for API-Heavy Platforms
-
-While the demo focuses on compliance use cases, the core patterns apply to any high-volume API platform:
-
-- **Semantic Caching**: Reduce LLM API costs by 80%+ using vector similarity
-- **Async Processing**: Redis Streams handle traffic spikes without blocking
-- **Fault Tolerance**: Zero message loss with XCLAIM recovery
-- **API Gateway Patterns**: Service layer abstraction for swappable backends
-- **Rate Limiting**: Token bucket implementation per tenant
-
-These patterns scale to any high-volume API platform: e-commerce fraud detection, healthcare compliance monitoring, financial transaction analysis, content moderation, IoT telemetry processing, music/media distribution, real-time logistics tracking, or multi-tenant SaaS platforms serving millions of requests.
-
-By reducing redundant LLM calls through semantic caching, these patterns also address the significant energy consumption of AI inference - cutting costs while reducing environmental impact.
-
-## 🎯 Domain-Specific Observability
-While most systems focus on **Monitoring Scope** (Is the server up?), Sentinel-L7 achieves **Domain-Specific Observability** by utilizing LLMs to reason about the semantics of financial and medical data in real-time.
-Sentinel-L7 provides deep-packet inspection and behavioral reasoning for mission-critical sectors:
-
-### **1. Financial Compliance (FinTech)**
-- **AML Monitoring:** Identifies "Smurfing" and fragmented transaction patterns designed to evade regulatory thresholds.
-- **Behavioral Drift:** Uses Upstash Vector to detect shifts in user velocity or merchant categories compared to historical profiles.
-- **Audit Narratives:** Automatically generates AI-justified "Suspicious Activity Reports" (SAR) for compliance officers.
-
-### **2. Healthcare Data Integrity (HealthTech)**
-- **HIPAA Guardrails:** Contextually justifies medical record access (e.g., "Is this provider on the patient's active care team?").
-- **Safety Intercepts:** Real-time drug-interaction checks during prescription events before they reach the pharmacy.
-- **PHI Protection:** Monitors for bulk exfiltration or unusual data harvesting of Protected Health Information.
-
-### **3. API Governance (Enterprise SaaS)**
-- **Intellectual Property (IP) Protection:** Detects "Semantic Scraping"—where users extract high-value data patterns while staying under standard rate limits.
-- **Shadow API Discovery:** Identifies unauthorized or deprecated endpoints being accessed within the internal network.
-- **Data Leakage Prevention (DLP):** Monitors API responses for sensitive tokens, keys, or non-anonymized customer data using AI-based pattern recognition.
+🌐 **Live demo:** https://sentinel-l7.cyberrhizome.ca/
 
 ---
 
-## 🏗️ System Architecture
+## 🎯 What this is
 
-Sentinel-L7 is a multi-process system that demonstrates advanced distributed patterns in a Laravel environment.
+I built this to get hands-on with a few specific problems:
 
-### **1. The Highway (Redis Streams)**
+- **Async ingestion without blocking** — how do you absorb traffic spikes while keeping the web process responsive?
+- **Reducing LLM costs at scale** — vector similarity as a cache layer before you ever hit the model
+- **Fault tolerance in a worker process** — what happens when a worker crashes mid-job?
+- **Clean architecture under Laravel** — keeping domain logic decoupled from infrastructure
 
-Transactions are ingested via an asynchronous stream. This ensures the primary application remains non-blocking while the Sentinel engine processes traffic at scale.
-
-### **2. The Memory (Upstash Vector)**
-
-
-The engine utilizes a dual-namespace vector strategy to maximize efficiency and accuracy:
-
-- **2a. Semantic Caching (Namespace: `default`):** Before invoking the LLM, the system performs a sub-50ms similarity search. If a >0.95 match is found, the existing risk report is reused, reducing latency and costs by 80%+.
-- **2b. Policy-Grounded RAG (Namespace: `policies`):** If the cache misses, the engine queries a secondary namespace containing indexed regulatory documents (AML, HIPAA, GDPR). This "Knowledge Base" provides the LLM with the exact ruleset required to audit the specific transaction type.
-### **3. The Cognitive Layer (Gemini 3 Flash)**
-
-Unrecognized or high-risk patterns are analyzed by Gemini 3 Flash using structured JSON mode to generate human-readable compliance justifications.
-
-### **4. The Safety Net (XCLAIM Recovery)**
-
-A dedicated recovery worker monitors the stream's Pending Entry List (PEL). If a worker process fails, the reclaimer re-assigns the message, ensuring zero data loss—a critical requirement for financial and medical auditing.
-
-### **5. Rate Limiting & Throttling**
-
-The stream consumer implements **token bucket** rate limiting per tenant:
-- Redis-based token allocation (100 req/min per API client)
-- Graceful degradation (queue overflow → backpressure)
-- Configurable per-endpoint quotas (vector search: 1000/day, LLM reasoning: 100/day)
-
-## 🛠️ Stack & Showcase
-
-- **Backend:** Laravel 12 (Service Manager Pattern, Redis Streams, Custom Artisan Daemons)
-- **Frontend:** Inertia.js + React 19 + shadcn/ui (Real-time anomaly feed)
-- **DevOps:** Render Blueprints (Infrastructure as Code)
-- **Testing:** Pest Architecture testing (Domain isolation)
+The compliance/AML domain gave these problems real shape: financial transaction processing has hard reliability requirements, which made the design decisions feel meaningful rather than academic.
 
 ---
 
-## 🛠️ Operational Commands
+## 🛠️ Stack
 
-- **Local Development:** `composer dev-full` (Starts Web + Worker + Reclaimer)
-- **On-Demand Simulation:** `php artisan sentinel:stream --limit=100` (Perfect for Render One-Off Jobs)
-- **Knowledge Ingestion:** `php artisan sentinel:ingest` (Indexes .md policies into the Vector Knowledge Base)
+| Layer | Technology |
+|---|---|
+| Backend | Laravel 12, PHP |
+| Frontend | Inertia.js + React 19 + shadcn/ui |
+| Async | Redis Streams (Upstash) |
+| Vector store | Upstash Vector |
+| AI | Gemini Flash (swappable via driver abstraction) |
+| DevOps | Docker, Render Blueprints (IaC) |
+| Testing | Pest + architecture tests |
 
-## System Diagram
+---
+
+## 🏗️ Architecture
+
+### Async ingestion (Redis Streams)
+
+Events are written to a Redis Stream via `XADD` and consumed by a dedicated worker process using `XREADGROUP`. The web process never blocks waiting for analysis to complete — it just writes to the stream and returns.
+
+### Semantic caching (dual-namespace vector strategy)
+
+Before invoking the LLM, the worker performs a sub-50ms vector similarity search against a cache namespace. If similarity exceeds 0.95, the existing result is returned — no model call needed. This cuts LLM costs by 80%+ on repeat or near-repeat patterns.
+
+On a cache miss, a second namespace containing indexed regulatory policy documents (AML, HIPAA, GDPR) is queried to provide the model with grounded context before it reasons about the transaction.
+
+### Fault tolerance (XCLAIM recovery)
+
+A separate reclaimer process monitors the stream's Pending Entry List. If a worker crashes mid-processing, the reclaimer detects the idle message and re-assigns it via `XCLAIM`. Zero message loss.
+
+### AI driver abstraction (Service Manager pattern)
+
+The AI backend is resolved through a `ComplianceManager` that extends Laravel's `Manager` class. Swapping from Gemini to OpenRouter (or any other backend) is a config change, not a code change. The domain logic only ever depends on the `ComplianceDriver` interface.
+
+### Domain isolation (enforced by architecture tests)
+
+Pest architecture tests assert that the core domain layer (`App\Services\Sentinel\Logic`) cannot directly import Laravel's `Http` or `Redis` facades. Infrastructure access goes through the contract layer. If someone breaks this boundary, the test suite catches it.
+
+---
+
+## 📐 Diagrams
+
+### System Overview
+
 ```mermaid
 graph TB
     subgraph "1. Entry & Identity"
@@ -116,28 +84,18 @@ graph TB
         VectorRules[(Vector: Namespace Policies)]
     end
 
-    %% Security Flow
     Web <-->|OIDC Auth| IdP
-
-    %% Ingestion Flow
     T1 & T2 & T3 -->|Tenant-Scoped XADD| Stream
-
-    %% Processing Flow
     Stream -.->|XREADGROUP| Worker
     Worker -->|2a. Search Cache| VectorCache
-
-    %% RAG & AI Flow
     Worker -->|2b. Fetch Policies| VectorRules
-    Worker -->|3. Reasoning| AI[Gemini 3 Flash]
-
-    %% Recovery & Feedback
+    Worker -->|3. Reasoning| AI[Gemini Flash]
     Reclaimer -.->|XCLAIM Zombie Tasks| Stream
     Worker -.->|Real-time Feed| Web
     Worker -->|Update Cache| VectorCache
 ```
-## The Compliance Processing Loop (Sequence)
 
-The **Semantic Cache** logic, showing the interaction between the worker and the AI.
+### Processing Loop
 
 ```mermaid
 sequenceDiagram
@@ -156,23 +114,18 @@ sequenceDiagram
         V-->>W: Return Cached Risk Report
         Note over W: Bypasses LLM (Fast Path)
     else Pattern New or Low Score
-        Note over W,V: 2b. Policy Retrieval (Namespace: policies)
+        note over W,V: 2b. Policy Retrieval (Namespace: policies)
         W->>V: Fetch Relevant Regulatory Rules
         V-->>W: Return AML/HIPAA Context
-
         W->>G: Analyze Intent + Policy Context
         G-->>W: Policy-Grounded Risk Analysis
-
         W->>V: Upsert New Vector + Metadata
-        Note over W: Update Semantic Memory
     end
 
     W->>S: Acknowledge (XACK)
 ```
 
-## State Machine: Message Lifecycle
-
-Fault tolerance - what happens when a worker crashes.
+### Message Lifecycle (Fault Tolerance)
 
 ```mermaid
 stateDiagram-v2
@@ -189,18 +142,17 @@ stateDiagram-v2
     Success --> [*]
 ```
 
-## Service Layer: Classes
+### Service Layer
+
 ```mermaid
 classDiagram
     direction TB
 
-    %% Interface Definition
     class ComplianceDriver {
         <<interface>>
         +analyze(array data) array
     }
 
-    %% Concrete Strategies
     class GeminiDriver {
         +analyze(array data) array
     }
@@ -209,7 +161,6 @@ classDiagram
         +analyze(array data) array
     }
 
-    %% The Manager (Context)
     class ComplianceManager {
         -Application app
         +driver(string name) ComplianceDriver
@@ -218,29 +169,20 @@ classDiagram
         +getDefaultDriver() string
     }
 
-    %% The Consumer/Client
     class ComplianceEngine {
         -ComplianceDriver ai
         +__construct(ComplianceDriver ai)
         +process(array transaction) array
     }
 
-    %% Relationships
     ComplianceDriver <|.. GeminiDriver : Realizes
     ComplianceDriver <|.. OpenRouterDriver : Realizes
-
     ComplianceManager ..> ComplianceDriver : Resolves
-    ComplianceManager ..> GeminiDriver : Creates
-    ComplianceManager ..> OpenRouterDriver : Creates
-
-    ComplianceEngine o-- ComplianceDriver : Aggregation (Injected)
-
-    %% Notes
-    note for ComplianceManager "Uses config('sentinel.ai_driver')<br/>to resolve the active driver."
-    note for ComplianceEngine "Injected via Laravel Service Container<br/>using the ComplianceDriver interface."
+    ComplianceEngine o-- ComplianceDriver : Injected
 ```
 
-## Domain Logic Hierarchy (Pest Arch Test)
+### Domain Logic Hierarchy
+
 ```mermaid
 graph LR
     subgraph "Protected Core"
@@ -263,3 +205,27 @@ graph LR
     Domain -.->|Forbidden| Redis
     Domain -->|Allowed| Contract[ComplianceDriver Interface]
 ```
+
+---
+
+## 🚀 Running locally
+
+```bash
+# Start web + worker + reclaimer
+composer dev-full
+
+# Run a batch through the stream manually
+php artisan sentinel:stream --limit=100
+
+# Index policy documents into the vector knowledge base
+php artisan sentinel:ingest
+```
+
+---
+
+## 🗺️ What I'd do next
+
+- Expand the React frontend — currently a real-time anomaly feed, could grow into a full compliance dashboard
+- Add more domain coverage (the healthcare and API governance patterns are stubbed)
+- Proper CI pipeline with the architecture tests running on push
+
