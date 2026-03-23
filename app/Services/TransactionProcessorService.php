@@ -22,9 +22,12 @@ class TransactionProcessorService
      * Returns a summary array for callers that want to log or display results.
      * Safe to ignore in queued jobs — side effects (metrics, feed) always happen.
      *
+     * Set $observe = false to skip metrics and feed recording (e.g. MCP / ad-hoc queries).
+     * The vector cache is always written regardless, as it benefits all callers.
+     *
      * @return array{source: string, is_threat: bool, message: string, elapsed_ms: float}
      */
-    public function process(array $data): array
+    public function process(array $data, bool $observe = true): array
     {
         $startTime = microtime(true);
         $txnId     = $data['id']       ?? uniqid('txn_');
@@ -42,12 +45,13 @@ class TransactionProcessorService
                 $isThreat = $analysis['isThreat'];
                 $message  = $analysis['message'];
 
-                if ($isThreat) {
-                    Cache::increment('sentinel_metrics_threat_count');
+                if ($observe) {
+                    if ($isThreat) {
+                        Cache::increment('sentinel_metrics_threat_count');
+                    }
+                    $this->recordMetric('cache_hit', microtime(true) - $startTime);
+                    $this->recordTransaction($txnId, $merchant, $amount, $currency, $isThreat, $message, 'cache_hit');
                 }
-
-                $this->recordMetric('cache_hit', microtime(true) - $startTime);
-                $this->recordTransaction($txnId, $merchant, $amount, $currency, $isThreat, $message, 'cache_hit');
 
                 return $this->summary('cache_hit', $isThreat, $message, $startTime);
             }
@@ -69,24 +73,29 @@ class TransactionProcessorService
                 ]
             );
 
-            $this->recordMetric('cache_miss', microtime(true) - $startTime);
+            if ($observe) {
+                $this->recordMetric('cache_miss', microtime(true) - $startTime);
+            }
             $source = 'cache_miss';
         } catch (\Throwable) {
             // Embedding or vector cache unavailable — fall back to direct analysis.
             // ThreatAnalysisService failure is intentionally uncaught and propagates.
             $result = $this->analyzer->analyze($data);
-            $this->recordMetric('fallback', microtime(true) - $startTime);
+            if ($observe) {
+                $this->recordMetric('fallback', microtime(true) - $startTime);
+            }
             $source = 'fallback';
         }
 
         $isThreat = $result->isThreat;
         $message  = $result->message;
 
-        if ($isThreat) {
-            Cache::increment('sentinel_metrics_threat_count');
+        if ($observe) {
+            if ($isThreat) {
+                Cache::increment('sentinel_metrics_threat_count');
+            }
+            $this->recordTransaction($txnId, $merchant, $amount, $currency, $isThreat, $message, $source);
         }
-
-        $this->recordTransaction($txnId, $merchant, $amount, $currency, $isThreat, $message, $source);
 
         return $this->summary($source, $isThreat, $message, $startTime);
     }

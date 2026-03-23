@@ -71,6 +71,42 @@ class VectorCacheService
         return true;
     }
 
+    /**
+     * Search a specific namespace with an explicit threshold.
+     * Returns all results above the threshold (not just the top match).
+     *
+     * @return array<int, array{id: string|null, score: float, metadata: array}>
+     */
+    public function searchNamespace(array $embedding, string $namespace, float $threshold, int $topK = 3): array
+    {
+        $response = Http::withToken($this->token)
+            ->timeout(5)
+            ->retry(2, 150, throw: false)
+            ->post("{$this->baseUrl}/namespaces/{$namespace}/query", [
+                'vector'          => $embedding,
+                'topK'            => $topK,
+                'includeMetadata' => true,
+            ]);
+
+        if (!$response->successful()) {
+            Log::warning('Vector namespace search failed', [
+                'namespace' => $namespace,
+                'status'    => $response->status(),
+            ]);
+            return [];
+        }
+
+        return collect($response->json('result') ?? [])
+            ->filter(fn (array $r) => ($r['score'] ?? 0) >= $threshold)
+            ->map(fn (array $r) => [
+                'id'       => $r['id'] ?? null,
+                'score'    => round($r['score'] ?? 0, 4),
+                'metadata' => $r['metadata'] ?? [],
+            ])
+            ->values()
+            ->all();
+    }
+
     public function delete(string $id): bool
     {
         $response = Http::withToken($this->token)

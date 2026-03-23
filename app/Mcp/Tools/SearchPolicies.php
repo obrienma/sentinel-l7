@@ -3,9 +3,8 @@
 namespace App\Mcp\Tools;
 
 use App\Services\EmbeddingService;
+use App\Services\VectorCacheService;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
-use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Log;
 use Laravel\Mcp\Request;
 use Laravel\Mcp\Response;
 use Laravel\Mcp\Server\Tool;
@@ -18,42 +17,20 @@ class SearchPolicies extends Tool
         Returns scored policy chunks with their text and metadata. Threshold: 0.70.
     MARKDOWN;
 
-    public function handle(Request $request, EmbeddingService $embedding): Response
+    public function handle(Request $request, EmbeddingService $embedding, VectorCacheService $vectorCache): Response
     {
         $validated = $request->validate([
             'query' => 'required|string|min:3',
             'limit' => 'sometimes|integer|min:1|max:10',
         ]);
 
-        $vector  = $embedding->embed($validated['query']);
-        $limit   = $validated['limit'] ?? 3;
-        $baseUrl = config('services.upstash_vector.url');
-        $token   = config('services.upstash_vector.token');
+        $vector   = $embedding->embed($validated['query']);
+        $limit    = $validated['limit'] ?? 3;
+        $policies = $vectorCache->searchNamespace($vector, 'policies', 0.70, $limit);
 
-        $response = Http::withToken($token)
-            ->timeout(5)
-            ->retry(2, 150, throw: false)
-            ->post("{$baseUrl}/namespaces/policies/query", [
-                'vector'          => $vector,
-                'topK'            => $limit,
-                'includeMetadata' => true,
-            ]);
-
-        if (!$response->successful()) {
-            Log::warning('MCP policy search failed', ['status' => $response->status()]);
-
-            return Response::json(['policies' => [], 'error' => 'Policy search unavailable']);
+        if ($policies === [] && $vector === null) {
+            return Response::json(['policies' => [], 'error' => 'Policy search unavailable', 'count' => 0]);
         }
-
-        $policies = collect($response->json('result') ?? [])
-            ->filter(fn (array $r) => ($r['score'] ?? 0) >= 0.70)
-            ->map(fn (array $r) => [
-                'id'       => $r['id'] ?? null,
-                'score'    => round($r['score'] ?? 0, 4),
-                'metadata' => $r['metadata'] ?? [],
-            ])
-            ->values()
-            ->all();
 
         return Response::json(['policies' => $policies, 'count' => count($policies)]);
     }

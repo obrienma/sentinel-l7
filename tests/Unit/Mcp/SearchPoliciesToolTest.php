@@ -89,8 +89,10 @@ it('returns empty policies when Upstash is unavailable', function () use ($fakeV
         'query' => 'HIPAA protected health information',
     ]);
 
-    // Tool handles the error gracefully and returns an empty result
-    $response->assertOk()->assertSee('Policy search unavailable');
+    // VectorCacheService logs the failure and returns [] — tool returns empty result gracefully
+    $response->assertOk()
+        ->assertSee('"count": 0')
+        ->assertDontSee('error');
 });
 
 // ─── validation ───────────────────────────────────────────────────────────────

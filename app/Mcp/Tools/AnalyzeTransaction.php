@@ -27,7 +27,7 @@ class AnalyzeTransaction extends Tool
             'category' => 'sometimes|string',
         ]);
 
-        $result = $processor->process($data);
+        $result = $processor->process($data, observe: false);
 
         return Response::json($result);
     }

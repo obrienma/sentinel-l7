@@ -2,12 +2,7 @@
 
 use App\Mcp\Servers\SentinelServer;
 use App\Mcp\Tools\AnalyzeTransaction;
-use App\Services\EmbeddingService;
-use App\Services\TransactionProcessorService;
-use App\Services\VectorCacheService;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Redis;
 
 uses(Tests\TestCase::class);
 
@@ -21,9 +16,8 @@ beforeEach(function () {
         'services.upstash_vector.similarity_threshold' => 0.95,
         'sentinel.thresholds.high_risk'        => 400.00,
     ]);
-
-    Cache::shouldReceive('increment')->zeroOrMoreTimes()->andReturn(1);
-    Redis::shouldReceive('executeRaw')->zeroOrMoreTimes()->andReturn(1);
+    // observe: false is passed by AnalyzeTransaction — metrics and feed are NOT written,
+    // so no Redis/Cache mocking is needed here.
 });
 
 // ─── cache hit path ───────────────────────────────────────────────────────────
