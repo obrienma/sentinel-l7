@@ -1,7 +1,110 @@
 # API
 
+## MCP Server (Implemented)
+
+> **Status: Implemented.** `POST /mcp` is live.
+
+Sentinel exposes a [Model Context Protocol](https://modelcontextprotocol.io/) server that lets AI agents call into the compliance pipeline as tools.
+
+### Endpoint
+
+```
+POST /mcp
+```
+
+Speaks the MCP JSON-RPC protocol. Connect any MCP-compatible client (Claude Desktop, Cursor, VS Code Copilot) by pointing it at this endpoint.
+
+### Tools
+
+#### `analyze_transaction`
+
+Runs the full compliance pipeline for a transaction: semantic cache check → AML/GDPR/HIPAA analysis → cache upsert.
+
+**Input:**
+```json
+{
+  "amount":   150.00,
+  "currency": "USD",
+  "merchant": "Shell Gas",
+  "type":     "purchase",
+  "category": "gas_station",
+  "id":       "txn_optional"
+}
+```
+
+**Output:**
+```json
+{
+  "source":     "cache_miss",
+  "is_threat":  false,
+  "message":    "Layer 7 Clear: Shell Gas - OK",
+  "elapsed_ms": 142.5
+}
+```
+
+`source` is one of `cache_hit`, `cache_miss`, or `fallback`.
+
+#### `search_policies`
+
+Semantic search over the indexed compliance policy knowledge base (`ns:policies`, threshold ≥ 0.70).
+
+**Input:**
+```json
+{
+  "query": "cash transactions above $10,000",
+  "limit": 3
+}
+```
+
+**Output:**
+```json
+{
+  "policies": [
+    { "id": "aml-001-threshold", "score": 0.8821, "metadata": { ... } }
+  ],
+  "count": 1
+}
+```
+
+#### `get_recent_transactions`
+
+Returns the live Redis feed of recently processed transactions, newest first.
+
+**Input:**
+```json
+{ "limit": 20 }
+```
+
+**Output:**
+```json
+{
+  "transactions": [ { "id": "...", "merchant": "...", "is_threat": false, ... } ],
+  "count": 20
+}
+```
+
+### Adding Auth
+
+The MCP route currently has no auth middleware. To restrict access:
+
+```php
+// routes/ai.php
+Mcp::web('/mcp', \App\Mcp\Servers\SentinelServer::class)
+    ->middleware(['auth:sanctum']);
+```
+
+Or use the built-in OAuth flow:
+
+```php
+Mcp::oauthRoutes(); // Registers /.well-known/oauth-* and /oauth/register
+```
+
+---
+
+## REST API (Planned)
+
 > **Status: Not implemented — intent documented.**
-> Currently all routes use the Inertia protocol (server-driven SPA). A public-facing REST API does not exist yet.
+> Currently all non-MCP routes use the Inertia protocol (server-driven SPA). A public-facing REST API does not exist yet.
 
 ## Intent
 

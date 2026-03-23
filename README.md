@@ -28,6 +28,7 @@ The compliance/AML domain gave these problems real shape: financial transaction 
 | Async | Redis Streams (Upstash) |
 | Vector store | Upstash Vector |
 | AI | Gemini Flash (swappable via driver abstraction) |
+| MCP | Laravel MCP — exposes tools to AI agents via Model Context Protocol |
 | DevOps | Docker, Render Blueprints (IaC) |
 | Testing | Pest + architecture tests |
 
@@ -52,6 +53,18 @@ A separate reclaimer process monitors the stream's Pending Entry List. If a work
 ### AI driver abstraction (Service Manager pattern)
 
 The AI backend is resolved through a `ComplianceManager` that extends Laravel's `Manager` class. Swapping from Gemini to OpenRouter (or any other backend) is a config change, not a code change. The domain logic only ever depends on the `ComplianceDriver` interface.
+
+### MCP server (Model Context Protocol)
+
+Sentinel exposes an MCP endpoint at `POST /mcp` that lets AI agents (Claude Desktop, Cursor, etc.) call into the compliance pipeline as tools. Three tools are registered:
+
+| Tool | What it does |
+|---|---|
+| `analyze_transaction` | Runs the full compliance pipeline — semantic cache check, then AML/GDPR/HIPAA analysis |
+| `search_policies` | Semantic search over the indexed regulatory policy knowledge base (ns:policies, ≥0.70) |
+| `get_recent_transactions` | Returns the live Redis feed of recently processed transactions |
+
+This lets an LLM look up applicable rules *before* deciding how to analyze a transaction — the multi-hop retrieval pattern that static RAG can't do.
 
 ### Domain isolation (enforced by architecture tests)
 
@@ -228,4 +241,5 @@ php artisan sentinel:ingest
 - Expand the React frontend — currently a real-time anomaly feed, could grow into a full compliance dashboard
 - Add more domain coverage (the healthcare and API governance patterns are stubbed)
 - Proper CI pipeline with the architecture tests running on push
+- Add OAuth to the MCP endpoint (`Mcp::oauthRoutes()`) so external agents can authenticate
 

@@ -84,6 +84,29 @@ Sentinel-L7 is a multi-process Laravel application. Three processes run concurre
 | `OpenRouterDriver` | Alternative AI backend | OpenRouter API |
 | `EmbeddingService` | Semantic fingerprints + embeddings | Gemini Embedding API |
 | `VectorCacheService` | Similarity search + cache storage | Upstash Vector |
+| `SentinelServer` (MCP) | Exposes compliance tools to AI agents via MCP | — |
+| `AnalyzeTransaction` (MCP tool) | Full pipeline via MCP call | `TransactionProcessorService` |
+| `SearchPolicies` (MCP tool) | Policy knowledge base search via MCP call | `EmbeddingService`, Upstash |
+| `GetRecentTransactions` (MCP tool) | Live transaction feed via MCP call | Redis |
+
+## MCP Server
+
+Sentinel exposes a Model Context Protocol server at `POST /mcp` (registered in `routes/ai.php`). This allows AI agents to call into the compliance pipeline as tools rather than just receiving pre-built prompt responses.
+
+```
+App\Mcp\Servers\SentinelServer
+  ├── App\Mcp\Tools\AnalyzeTransaction   → TransactionProcessorService
+  ├── App\Mcp\Tools\SearchPolicies       → EmbeddingService + Upstash ns:policies
+  └── App\Mcp\Tools\GetRecentTransactions → Redis (sentinel:recent_transactions)
+```
+
+| Tool | Input | Returns |
+|---|---|---|
+| `analyze_transaction` | `amount`, `currency`, `merchant`, optional `type`/`category`/`id` | `{source, is_threat, message, elapsed_ms}` |
+| `search_policies` | `query`, optional `limit` | `{policies[], count}` scored ≥0.70 |
+| `get_recent_transactions` | optional `limit` | `{transactions[], count}` from live Redis feed |
+
+The endpoint speaks the MCP JSON-RPC protocol. Any MCP-compatible client (Claude Desktop, Cursor, etc.) can connect by pointing at `/mcp`.
 
 ## AI Driver Pattern (Service Manager)
 
