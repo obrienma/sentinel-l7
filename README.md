@@ -2,7 +2,7 @@
 
 A multi-process Laravel application built to explore production patterns for async message processing, semantic caching, and fault-tolerant distributed systems — using a financial compliance engine as the domain.
 
-🌐 **Live demo:** https://sentinel-l7.cyberrhizome.ca/
+🌐 **Early Signup:** https://sentinel-l7.cyberrhizome.ca/
 
 ---
 
