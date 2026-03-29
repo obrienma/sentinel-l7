@@ -37,15 +37,38 @@ class EmbeddingService
         return $response->json('embedding.values');
     }
 
+    private function amountTier(float $amount): string
+    {
+        return match(true) {
+            $amount < 10    => 'micro',
+            $amount < 100   => 'small',
+            $amount < 500   => 'medium',
+            $amount < 2000  => 'large',
+            default         => 'very_large',
+        };
+    }
+
     public function createTransactionFingerprint(array $transaction): string
     {
+        $amount = isset($transaction['amount']) ? (float) $transaction['amount'] : null;
+
         // Create a semantic fingerprint of the transaction
-        return implode(' | ', [
-            "Amount: " . ($transaction['amount'] ?? 'N/A') . " " . ($transaction['currency'] ?? 'N/A'),
+        $fingerprint = implode(' | ', [
+            "Amount: " . ($amount !== null ? $this->amountTier($amount) : 'N/A') . " " . ($transaction['currency'] ?? 'N/A'),
             "Type: " . ($transaction['type'] ?? 'N/A'),
             "Category: " . ($transaction['category'] ?? 'unknown'),
-            "Time: " . (isset($transaction['timestamp']) ? date('H:i', strtotime($transaction['timestamp'])) : 'N/A'),
             "Merchant: " . ($transaction['merchant_name'] ?? 'N/A'),
+            "Time: " . (isset($transaction['timestamp']) ? match(true) {
+                (int) date('G', strtotime($transaction['timestamp'])) < 6  => 'night',
+                (int) date('G', strtotime($transaction['timestamp'])) < 12 => 'morning',
+                (int) date('G', strtotime($transaction['timestamp'])) < 17 => 'afternoon',
+                (int) date('G', strtotime($transaction['timestamp'])) < 21 => 'evening',
+                default => 'night',
+            } : 'N/A'),
         ]);
+
+        Log::debug('[Sentinel] Fingerprint: ' . $fingerprint);
+
+        return $fingerprint;
     }
 }

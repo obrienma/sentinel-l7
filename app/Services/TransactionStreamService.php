@@ -50,16 +50,24 @@ class TransactionStreamService
      * Block-reads new messages from the stream.
      * Pass '$' on first call to receive only new messages.
      *
-     * @return array<int, array> List of raw messages
+     * @param  string $lastId  Stream cursor — pass '$' initially, then pass the last message ID on subsequent calls.
+     * @return array{messages: array, cursor: string}
      */
     public function read(string $lastId = '$'): array
     {
         $results = LRedis::executeRaw(['XREAD', 'BLOCK', '0', 'STREAMS', self::STREAM_KEY, $lastId]);
 
         if (!$results) {
-            return [];
+            return ['messages' => [], 'cursor' => $lastId];
         }
 
-        return $results[0][1];
+        $messages = $results[0][1];
+
+        return [
+            'messages' => $messages,
+            // Advance cursor to the last message ID so the next call doesn't miss
+            // messages that arrived while we were processing the current batch.
+            'cursor'   => end($messages)[0],
+        ];
     }
 }

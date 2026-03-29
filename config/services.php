@@ -39,7 +39,7 @@ return [
         'url'                  => env('UPSTASH_VECTOR_REST_URL'),
         'token'                => env('UPSTASH_VECTOR_REST_TOKEN'),
         'dimension'            => 1536, // Gemini embedding-001 output_dimensionality
-        'similarity_threshold' => env('UPSTASH_VECTOR_THRESHOLD', 0.95),
+        'similarity_threshold' => env('UPSTASH_VECTOR_THRESHOLD', 0.90),
     ],
 
     'gemini' => [

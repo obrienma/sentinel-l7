@@ -16,8 +16,11 @@ class WatchTransactions extends Command
     ): void {
         $this->info('Sentinel-L7: Watcher initialized...');
 
+        $cursor = '$';
         while (true) {
-            foreach ($stream->read('$') as $streamMsg) {
+            $result = $stream->read($cursor);
+            $cursor = $result['cursor'];
+            foreach ($result['messages'] as $streamMsg) {
                 $data     = json_decode($streamMsg[1][1], true);
                 $txnId    = $data['id']       ?? '?';
                 $merchant = $data['merchant'] ?? $data['merchant_name'] ?? '?';

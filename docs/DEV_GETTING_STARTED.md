@@ -75,6 +75,9 @@ php artisan sentinel:stream --limit=100
 
 # Index policy documents into Vector KB
 php artisan sentinel:ingest
+
+# Reset dashboard metrics counters
+php artisan sentinel:reset-metrics
 ```
 
 ## Frontend
