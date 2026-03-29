@@ -19,6 +19,10 @@ The compliance/AML domain gave these problems real shape: financial transaction 
 
 ---
 
+![ezgif-sentinel-dash](https://github.com/user-attachments/assets/30673fc0-eee5-43ae-ac4f-e76b49bc550f)
+
+![ezgif-sentinel-term](https://github.com/user-attachments/assets/cca0a4f7-7d69-4382-8a4e-e17a5d2ee0cf)
+
 ## 🛠️ Stack
 
 | Layer | Technology |
