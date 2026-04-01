@@ -32,6 +32,16 @@ arch('services do not render Inertia responses')
     ->expect('App\Services')
     ->not->toUse('Inertia\Inertia');
 
+// ─── Compliance drivers ───────────────────────────────────────────────────────
+
+arch('compliance drivers implement ComplianceDriver contract')
+    ->expect('App\Services\Compliance')
+    ->toImplement('App\Contracts\ComplianceDriver');
+
+arch('compliance drivers do not depend on controllers')
+    ->expect('App\Services\Compliance')
+    ->not->toUse('App\Http\Controllers');
+
 // ─── Global ───────────────────────────────────────────────────────────────────
 
 arch('no code uses dd or dump')
