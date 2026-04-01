@@ -114,3 +114,13 @@ Create decision logs according to https://martinfowler.com/bliki/ArchitectureDec
 ## Pending ADRs
 - **ADR-0016** (TODO): Synapse-L4 Axiom ingestion — how Sentinel-L7 receives validated Axioms from the Synapse-L4 sidecar. Decisions needed: new Redis stream key (`synapse:axioms`) vs. existing transaction stream; how `anomaly_score` routes to audit narrative generation; `source_id` correlation back to EventHorizon events. Stub at `docs/adr/0016-synapse-l4-axiom-ingestion.md`.
 
+## Claude Code Workflow Notes
+
+- **Work one step at a time** and pause for confirmation before moving to the next build step.
+- **Commit after each logical step** — the user commits manually; don't push. Do provide a commit message for the user.
+- **Don't add features beyond what's asked.** No extra error handling, no extra abstractions, no unrequested refactors.
+- **No doc files** unless explicitly requested. Update `CLAUDE.md` Build Status section after each completed step.
+- **Maintain `LEARNING_LOG.md`**: After each phase, append new entries for every pattern used, anti-pattern avoided, challenge encountered, or design decision made. Use the established entry format (Pattern / Anti-Pattern / Challenge / Decision sections with **Q:**/**A:** flashcard blocks).
+- TypeScript strict mode means all nullable paths must be handled — don't use `!` non-null assertions unless provably safe.
+- ESM (`"type": "module"`) — all imports need explicit `.js` extensions when importing local files (TypeScript resolves `.ts` → `.js` at runtime with NodeNext).
+- Update the Build Status section in this file after each completed step.

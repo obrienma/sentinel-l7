@@ -245,8 +245,16 @@ php artisan sentinel:reset-metrics
 
 ## 🗺️ What I'd do next
 
-- Expand the React frontend — currently a real-time anomaly feed, could grow into a full compliance dashboard
-- Add more domain coverage (the healthcare and API governance patterns are stubbed)
-- Proper CI pipeline with the architecture tests running on push
-- Add OAuth to the MCP endpoint (`Mcp::oauthRoutes()`) so external agents can authenticate
+### Synapse-L4 integration (ADR-0016 — in progress)
+Synapse-L4 is a Python/FastAPI sidecar that validates raw telemetry through an LLM judge pass and emits typed, immutable **Axioms** into a dedicated `synapse:axioms` Redis stream. Sentinel-L7 will consume this stream with a new worker process. When `anomaly_score > 0.8`, the Axiom is routed to Gemini Flash with policy RAG context for an AI-generated audit narrative. Every Axiom is persisted to Postgres (`compliance_events`) with its `source_id` for correlation back to EventHorizon — regardless of whether it triggered AI analysis.
+
+This required building the full `ComplianceDriver` stack that was designed in ADR-0006 but not yet implemented: a `ComplianceDriver` interface, `GeminiDriver` (Gemini Flash + policy RAG), `OpenRouterDriver` stub, and `ComplianceManager` (Laravel Service Manager pattern for provider switching).
+
+### What's still ahead
+- **Synapse-L4 Python sidecar** — the emitter side: FastAPI LLM judge pass + `src/clients/sentinel.py` Redis client
+- **Compliance dashboard** — surface `compliance_events` in the React frontend with AI narratives, risk levels, and EventHorizon correlation (enables the disabled Flags/Compliance nav pages)
+- **XCLAIM recovery for Axiom stream** — extend the Safety Reclaimer to handle the `synapse:axioms` consumer group (same XCLAIM pattern as the transactions stream)
+- **OpenRouterDriver** — implement the stub for `SENTINEL_AI_DRIVER=openrouter` provider switching
+- **OAuth on the MCP endpoint** — `Mcp::oauthRoutes()` before production agent access
+- **CI pipeline** — architecture tests + unit suite running on every push
 
