@@ -8,7 +8,7 @@ Project-specific guidance for Claude Code when working in this repository.
 - **Frontend:** React 19, Inertia.js, shadcn/ui (New York style, slate base), Tailwind CSS v4
 - **AI:** Gemini Flash (compliance analysis), Gemini `embedding-001` (1536-dim vectors)
 - **Infrastructure:** Upstash Redis Streams + Upstash Vector, Neon PostgreSQL
-- **Deployment:** Render (render.yaml Blueprint)
+- **Deployment:** Railway
 
 ## Running the Project
 
@@ -110,4 +110,7 @@ These are separate from Redis Streams — plain key/value `SET`/`GET`, not strea
 
 ## ADR files
 Create decision logs according to https://martinfowler.com/bliki/ArchitectureDecisionRecord.html
+
+## Pending ADRs
+- **ADR-0016** (TODO): Synapse-L4 Axiom ingestion — how Sentinel-L7 receives validated Axioms from the Synapse-L4 sidecar. Decisions needed: new Redis stream key (`synapse:axioms`) vs. existing transaction stream; how `anomaly_score` routes to audit narrative generation; `source_id` correlation back to EventHorizon events. Stub at `docs/adr/0016-synapse-l4-axiom-ingestion.md`.
 

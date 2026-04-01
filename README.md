@@ -33,7 +33,7 @@ The compliance/AML domain gave these problems real shape: financial transaction 
 | Vector store | Upstash Vector |
 | AI | Gemini Flash (swappable via driver abstraction) |
 | MCP | Laravel MCP — exposes tools to AI agents via Model Context Protocol |
-| DevOps | Docker, Render Blueprints (IaC) |
+| DevOps | Docker, Railway (IaC) |
 | Testing | Pest + architecture tests |
 
 ---
@@ -89,7 +89,7 @@ graph TB
         IdP[OAuth 2.0 / OIDC Provider]
     end
 
-    subgraph "2. Infrastructure (Render)"
+    subgraph "2. Infrastructure (Railway)"
         Web[Web Dashboard - Inertia/React]
         Worker[Sentinel Consumer - PHP]
         Reclaimer[Safety Reclaimer - PHP]
