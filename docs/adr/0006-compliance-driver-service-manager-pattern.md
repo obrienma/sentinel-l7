@@ -17,7 +17,7 @@ interface ComplianceDriver {
 }
 ```
 
-`ComplianceManager` extends Laravel's `Manager` class and resolves the active driver from `config('sentinel.ai_driver')` (set via `SENTINEL_AI_DRIVER` env var). Two drivers are implemented: `GeminiDriver` and `OpenRouterDriver`. Switching providers requires only an env var change — no code changes.
+`ComplianceManager` extends Laravel's `Manager` class and resolves the active driver from `config('sentinel.ai_driver')` (set via `SENTINEL_AI_DRIVER` env var). Two drivers are registered: `GeminiDriver` (fully implemented — Gemini Flash with policy RAG) and `OpenRouterDriver` (stub — throws `RuntimeException` until implemented). Switching providers requires only an env var change — no code changes.
 
 ## Consequences
 

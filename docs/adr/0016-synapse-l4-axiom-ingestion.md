@@ -76,7 +76,7 @@ SENTINEL_AI_DRIVER=gemini
 ## Consequences
 
 - [x] New stream key `synapse:axioms` defined — separate from `transactions`
-- [x] Consumer worker `sentinel:watch-axioms` implemented
+- [ ] Consumer worker `sentinel:watch-axioms` implemented
 - [x] `anomaly_score` threshold documented and added to `.env.example`
 - [x] `source_id` stored in `compliance_events` (Postgres) for audit trail
 - [ ] Synapse-L4 `src/clients/sentinel.py` — emitter side to be implemented in the Synapse-L4 repo
