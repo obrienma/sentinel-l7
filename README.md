@@ -23,6 +23,22 @@ The compliance/AML domain gave these problems real shape: financial transaction 
 
 ![ezgif-sentinel-term](https://github.com/user-attachments/assets/cca0a4f7-7d69-4382-8a4e-e17a5d2ee0cf)
 
+## 📊 Status
+
+- [x] Core pipeline — Redis Streams, semantic cache, fault tolerance (XCLAIM)
+- [x] React 19 + shadcn/ui dashboard with live transaction feed
+- [x] MCP server (analyze_transaction, search_policies, get_recent_transactions)
+- [ ] ComplianceDriver stack — GeminiDriver (Gemini Flash + policy RAG), OpenRouterDriver stub, ComplianceManager
+- [ ] Synapse-L4 Axiom ingestion — `synapse:axioms` Redis stream + `sentinel:watch-axioms` worker
+- [ ] `compliance_events` audit trail — Postgres persistence with `source_id` correlation
+- [ ] Synapse-L4 Python sidecar — FastAPI LLM judge pass + Redis emitter
+- [ ] Compliance dashboard — Flags / Events nav pages surfacing `compliance_events`
+- [ ] XCLAIM recovery for `synapse:axioms` consumer group
+- [ ] MCP OAuth — `Mcp::oauthRoutes()` for production agent access
+- [ ] CI pipeline — architecture tests + unit suite on every push
+
+---
+
 ## 🛠️ Stack
 
 | Layer | Technology |
