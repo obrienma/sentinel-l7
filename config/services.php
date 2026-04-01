@@ -48,6 +48,10 @@ return [
             'GEMINI_EMBEDDING_URL',
             'https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent'
         ),
+        'flash_url'     => env(
+            'GEMINI_FLASH_URL',
+            'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent'
+        ),
     ],
 
 ];
