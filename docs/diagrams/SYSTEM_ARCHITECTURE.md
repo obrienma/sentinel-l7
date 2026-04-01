@@ -38,13 +38,15 @@ graph TB
     subgraph Workers["Background Processes"]
         W[sentinel:consume\nStream Worker]
         R[sentinel:reclaim\nPEL Reclaimer]
+        WA[sentinel:watch-axioms\nAxiom Worker]
     end
 
     subgraph External["External Services"]
         GemEmbed["Gemini\nEmbedding API"]
         GemAI["Gemini Flash\nAI Analysis"]
         UV["Upstash Vector\nns:default + ns:policies"]
-        Redis["Upstash Redis\nStreams"]
+        Redis["Upstash Redis\nStreams\ntransactions + synapse:axioms"]
+        PG["Neon PostgreSQL\ncompliance_events"]
     end
 
     Home --> HC
@@ -62,6 +64,11 @@ graph TB
     CE --> VCS --> UV
     W --> Redis
     R --> Redis
+    WA --> Redis
+    WA --> CM
+    WA --> PG
+    GD --> ES
+    GD --> VCS
 
     classDef frontend fill:#0f172a,stroke:#3b82f6,color:#93c5fd
     classDef controller fill:#0f172a,stroke:#6366f1,color:#a5b4fc
@@ -73,7 +80,7 @@ graph TB
     class HC,AC,DC,HIR,AM controller
     class CE,CM,ES,VCS,GD,OD service
     class GemEmbed,GemAI,UV,Redis external
-    class W,R worker
+    class W,R,WA worker
 ```
 
 ## Service Dependency Graph
@@ -83,17 +90,31 @@ graph LR
     W[sentinel:consume] --> CE[ComplianceEngine]
     W --> ES[EmbeddingService]
     W --> VCS[VectorCacheService]
-    W --> Redis[(Redis Stream)]
+    W --> Redis[(Redis Stream\ntransactions)]
 
     CE --> CM[ComplianceManager]
     CM --> GD[GeminiDriver]
     CM --> OD[OpenRouterDriver]
 
-    GD & OD --> GemAI((Gemini Flash))
+    GD --> GemAI((Gemini Flash))
+    GD --> ES
+    GD --> VCS
+    OD --> GemAI
     ES --> GemEmbed((Gemini Embed))
-    VCS --> UV((Upstash Vector))
+    VCS --> UV((Upstash Vector\nns:default + ns:policies))
 
     R[sentinel:reclaim] --> Redis
+
+    WA[sentinel:watch-axioms] --> APS[AxiomProcessorService]
+    WA --> ASS[AxiomStreamService]
+    WA --> AxRedis[(Redis Stream\nsynapse:axioms)]
+    APS --> CM
+    APS --> PG[(Neon PostgreSQL\ncompliance_events)]
+    ASS --> AxRedis
+
+    IN[sentinel:ingest] --> ES
+    IN --> VCS
+    IN --> PolicyFiles[("policies/*.md")]
 ```
 
 ## Auth Flow

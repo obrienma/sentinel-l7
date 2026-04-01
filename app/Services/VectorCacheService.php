@@ -107,6 +107,35 @@ class VectorCacheService
             ->all();
     }
 
+    /**
+     * Upsert a vector into a specific namespace.
+     */
+    public function upsertNamespace(string $id, array $embedding, array $metadata, string $namespace): bool
+    {
+        $response = Http::withToken($this->token)
+            ->timeout(5)
+            ->retry(2, 150, throw: false)
+            ->post("{$this->baseUrl}/namespaces/{$namespace}/upsert", [
+                [
+                    'id'       => $id,
+                    'vector'   => $embedding,
+                    'metadata' => $metadata,
+                ]
+            ]);
+
+        if (!$response->successful()) {
+            Log::warning('Vector namespace upsert failed', [
+                'namespace' => $namespace,
+                'id'        => $id,
+                'status'    => $response->status(),
+                'body'      => $response->body(),
+            ]);
+            return false;
+        }
+
+        return true;
+    }
+
     public function delete(string $id): bool
     {
         $response = Http::withToken($this->token)

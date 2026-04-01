@@ -121,6 +121,8 @@ Create decision logs according to https://martinfowler.com/bliki/ArchitectureDec
 - **Don't add features beyond what's asked.** No extra error handling, no extra abstractions, no unrequested refactors.
 - **No doc files** unless explicitly requested. Update `CLAUDE.md` Build Status section after each completed step.
 - **Maintain `LEARNING_LOG.md`**: After each phase, append new entries for every pattern used, anti-pattern avoided, challenge encountered, or design decision made. Use the established entry format (Pattern / Anti-Pattern / Challenge / Decision sections with **Q:**/**A:** flashcard blocks).
+- **`LEARNING_LOG.md` is referred to as `ll`** in conversation — treat "ll" as shorthand for `LEARNING_LOG.md`.
+- **Challenges are mandatory in every log entry**: Every phase entry must include a `### Challenges` section. If no challenge was encountered, state that explicitly — do not omit the section. Challenges include: unexpected library behaviour, error messages that required diagnosis, gotchas discovered during testing, version-specific quirks, and any moment where the first approach didn't work. Retroactively add challenges to existing entries if a new phase reveals a prior gotcha.
 - TypeScript strict mode means all nullable paths must be handled — don't use `!` non-null assertions unless provably safe.
 - ESM (`"type": "module"`) — all imports need explicit `.js` extensions when importing local files (TypeScript resolves `.ts` → `.js` at runtime with NodeNext).
 - Update the Build Status section in this file after each completed step.
