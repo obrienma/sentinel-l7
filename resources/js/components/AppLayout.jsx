@@ -14,7 +14,7 @@ import {
 const NAV_ITEMS = [
     { label: 'Dashboard',     href: '/dashboard',    icon: LayoutDashboard },
     { label: 'Transactions',  href: '/transactions', icon: ArrowLeftRight,  disabled: true },
-    { label: 'Flags',         href: '/flags',        icon: AlertTriangle,   disabled: true },
+    { label: 'Events',        href: '/events',       icon: AlertTriangle },
     { label: 'Policies',      href: '/policies',     icon: FileText,        disabled: true },
     { label: 'Settings',      href: '/settings',     icon: Settings,        disabled: true },
 ];

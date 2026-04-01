@@ -27,13 +27,18 @@ class GeminiDriver implements ComplianceDriver
 
     private function buildQueryText(array $data): string
     {
-        return sprintf(
-            'Anomaly detected: status=%s, metric_value=%s, anomaly_score=%s, source=%s',
-            $data['status']        ?? 'unknown',
-            $data['metric_value']  ?? 'N/A',
-            $data['anomaly_score'] ?? 'N/A',
-            $data['source_id']     ?? 'unknown',
-        );
+        $status   = $data['status']        ?? 'unknown';
+        $score    = (float) ($data['anomaly_score'] ?? 0.0);
+
+        $severity = match(true) {
+            $score >= 0.90 => 'critical severity requiring immediate escalation and reporting',
+            $score >= 0.80 => 'high severity requiring compliance review and possible regulatory notification',
+            $score >= 0.60 => 'moderate severity requiring monitoring and documentation',
+            default        => 'low severity for audit logging',
+        };
+
+        return "What compliance obligations, reporting requirements, and regulatory thresholds apply "
+             . "to a {$status} anomaly event of {$severity}?";
     }
 
     private function fetchPolicyContext(string $query): array

@@ -104,7 +104,152 @@ services.upstash_vector.token  → UPSTASH_VECTOR_REST_TOKEN
 services.upstash_vector.similarity_threshold → UPSTASH_VECTOR_THRESHOLD (default: 0.95)
 ```
 
-> **Namespace note:** The current `VectorCacheService` uses the Upstash default namespace. The dual-namespace strategy (`ns:default` for cache, `ns:policies` for RAG) is documented in [ARCHITECTURE.md](ARCHITECTURE.md) and [diagrams/RAG_PIPELINE.md](diagrams/RAG_PIPELINE.md) — namespace support is a planned extension.
+### `searchNamespace(array $embedding, string $namespace, float $threshold, int $topK = 3): array`
+
+Queries a specific Upstash namespace with an explicit threshold. Returns all results above the threshold (not just the best match), each as `{id, score, metadata}`. Used by `GeminiDriver` and the `SearchPolicies` MCP tool to query `ns:policies`.
+
+```php
+$chunks = $vectorCache->searchNamespace($vector, 'policies', 0.70, 3);
+// → [['id' => 'aml-bsa-compliance_2', 'score' => 0.83, 'metadata' => ['text' => '...', ...]]]
+```
+
+### `upsertNamespace(string $id, array $embedding, array $metadata, string $namespace): bool`
+
+Upserts a vector into a specific namespace. Used by `sentinel:ingest` to populate `ns:policies`.
+
+```php
+$vectorCache->upsertNamespace('aml-bsa-compliance_2', $vector, [
+    'text'   => $chunkText,
+    'source' => 'aml-bsa-compliance',
+    'chunk'  => 2,
+], 'policies');
+```
+
+**Config keys read:**
+```
+services.upstash_vector.url    → UPSTASH_VECTOR_REST_URL
+services.upstash_vector.token  → UPSTASH_VECTOR_REST_TOKEN
+services.upstash_vector.similarity_threshold → UPSTASH_VECTOR_THRESHOLD (default: 0.95, used by search() only)
+```
+
+---
+
+## ComplianceManager
+
+**File:** `app/Services/ComplianceManager.php`  
+**Extends:** `Illuminate\Support\Manager`
+
+Resolves the active `ComplianceDriver` implementation from config. Adding a new AI backend means adding a `createFooDriver()` method and setting `SENTINEL_AI_DRIVER=foo` — no call-site changes required.
+
+```php
+// Resolved automatically by AppServiceProvider binding ComplianceDriver → ComplianceManager::driver()
+$driver = app(ComplianceDriver::class);
+$result = $driver->analyze($axiomData);
+```
+
+**Config key read:**
+```
+sentinel.ai_driver → SENTINEL_AI_DRIVER (default: gemini)
+```
+
+**Registered drivers:** `gemini` → `GeminiDriver`, `openrouter` → `OpenRouterDriver`
+
+---
+
+## GeminiDriver
+
+**File:** `app/Services/Compliance/GeminiDriver.php`  
+**Implements:** `App\Contracts\ComplianceDriver`
+
+Runs the full RAG + AI analysis pipeline for a single Axiom:
+
+```
+buildQueryText(data)                   // translate anomaly fields → compliance question
+  → EmbeddingService::embed(query)     // embed the question
+  → VectorCacheService::searchNamespace('policies', 0.70, 3)  // retrieve policy chunks
+  → buildPrompt(data, chunks)          // inject Axiom + policy context into prompt
+  → Gemini Flash (structured JSON)     // generate audit narrative
+  → parseResponse(raw)                 // strip markdown fences, decode JSON
+```
+
+Returns `{narrative, risk_level, policy_refs, confidence}`.
+
+**Query formulation:** `buildQueryText()` translates `anomaly_score` to a severity phrase so the embedding lands in the same semantic space as policy text about reporting obligations. Score ≥0.90 → `"critical severity requiring immediate escalation and reporting"`, etc.
+
+**Resilience:** If policy RAG fails (embedding or vector search throws), `fetchPolicyContext()` catches the exception, logs a warning, and proceeds with an empty context. The Gemini call still runs — it just has no retrieved policy chunks.
+
+**Config keys read:**
+```
+services.gemini.api_key   → GEMINI_API_KEY
+services.gemini.flash_url → GEMINI_FLASH_URL
+```
+
+---
+
+## AxiomStreamService
+
+**File:** `app/Services/AxiomStreamService.php`
+
+Publish/read on the `synapse:axioms` Redis stream. Mirrors `TransactionStreamService` in shape.
+
+### `publish(array $data): bool`
+
+`XADD synapse:axioms MAXLEN ~ 500 * data <json>`
+
+### `read(string $lastId = '$'): array`
+
+`XREAD BLOCK 0 STREAMS synapse:axioms <lastId>`
+
+Returns `{messages: array, cursor: string}`. Pass `$` on the first call to receive only new messages; pass the returned cursor on subsequent calls.
+
+---
+
+## AxiomProcessorService
+
+**File:** `app/Services/AxiomProcessorService.php`
+
+Processes a single Axiom payload from the `synapse:axioms` stream. Two rules:
+
+1. **Always persist** a `ComplianceEvent` row — no Axiom is silently dropped.
+2. **Route to AI** only when `anomaly_score > AXIOM_AUDIT_THRESHOLD` (default `0.8`).
+
+```
+process(data)
+  ├─ score > threshold → ComplianceDriver::analyze(data) → persist (routed_to_ai=true)
+  └─ score ≤ threshold → persist (routed_to_ai=false, narrative=null)
+```
+
+Returns `{source_id, routed_to_ai, risk_level, narrative, elapsed_ms}`.
+
+**Resilience:** If the driver throws, the exception is caught, a warning is logged, and the `ComplianceEvent` is still persisted with `audit_narrative = null`.
+
+**Config key read:**
+```
+sentinel.axiom_threshold → AXIOM_AUDIT_THRESHOLD (default: 0.8)
+```
+
+---
+
+## SentinelIngest (`sentinel:ingest`)
+
+**File:** `app/Console/Commands/SentinelIngest.php`  
+**Run:** `php artisan sentinel:ingest`
+
+Chunks `.md` policy files and upserts each chunk into `ns:policies`.
+
+**Pipeline per file:**
+```
+glob policies/*.md
+  → chunk on paragraph boundaries (~500 words each)
+  → EmbeddingService::embed(chunkText)
+  → VectorCacheService::upsertNamespace(id, vector, {text, source, chunk}, 'policies')
+```
+
+**Options:**
+- `--path=policies` — directory of `.md` files (default: `base_path('policies')`)
+- `--chunk-size=500` — target word count per chunk
+
+Chunk IDs follow the pattern `{filename}_{index}` (e.g. `aml-bsa-compliance_2`). Upserts are idempotent — re-running updates existing vectors in place.
 
 ---
 
