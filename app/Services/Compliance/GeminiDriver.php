@@ -62,27 +62,17 @@ class GeminiDriver implements ComplianceDriver
                 ->map(fn ($c) => '- ' . ($c['metadata']['text'] ?? json_encode($c['metadata'])))
                 ->implode("\n");
 
-        return <<<PROMPT
-            You are a compliance audit system. An anomaly has been reported by the Synapse-L4 telemetry layer.
-
-            Anomaly details:
-            - Status: {$data['status']}
-            - Metric value: {$data['metric_value']}
-            - Anomaly score: {$data['anomaly_score']}
-            - Source ID: {$data['source_id']}
-            - Emitted at: {$data['emitted_at']}
-
-            Relevant compliance policy context:
-            {$policyText}
-
-            Produce a structured compliance audit narrative. Respond ONLY with valid JSON matching this schema exactly:
-            {
-              "narrative": "<one or two sentence audit summary>",
-              "risk_level": "<low|medium|high|critical>",
-              "policy_refs": ["<policy id or title>"],
-              "confidence": <float 0.0-1.0>
-            }
-            PROMPT;
+        return strtr(
+            file_get_contents(base_path('prompts/compliance-audit-narrative.txt')),
+            [
+                '{status}'         => $data['status']        ?? 'unknown',
+                '{metric_value}'   => $data['metric_value']  ?? 'unknown',
+                '{anomaly_score}'  => $data['anomaly_score'] ?? 'unknown',
+                '{source_id}'      => $data['source_id']     ?? 'unknown',
+                '{emitted_at}'     => $data['emitted_at']    ?? 'unknown',
+                '{policy_context}' => $policyText,
+            ]
+        );
     }
 
     private function callGeminiFlash(string $prompt): string

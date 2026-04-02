@@ -1,8 +1,14 @@
 # Prompt: Compliance Audit Narrative
 
-**Used by:** `App\Services\Compliance\GeminiDriver`  
-**Model:** `gemini-2.0-flash`  
-**Version:** 1  
+**Used by:** `App\Services\Compliance\GeminiDriver`, `App\Services\Compliance\OpenRouterDriver`  
+**Model:** `gemini-2.0-flash` (Gemini), `meta-llama/llama-3.3-8b-instruct:free` default (OpenRouter, overridable via `OPENROUTER_MODEL`)  
+**Version:** 3  
+**Template file:** `prompts/compliance-audit-narrative.txt`
+
+### Changelog
+- **v3** (2026-04-01): Extracted prompt text to `compliance-audit-narrative.txt`. Both drivers now load from file via `file_get_contents(base_path(...))` + `strtr()` substitution. No prompt text change.
+- **v2** (2026-04-01): Extended to `OpenRouterDriver`. Added note on JSON enforcement difference between backends.
+- **v1**: Initial version for `GeminiDriver`.
 
 ---
 
@@ -14,27 +20,7 @@ Given a Synapse-L4 Axiom (anomaly event) and retrieved policy context, produce a
 
 ## Template
 
-```
-You are a compliance audit system. An anomaly has been reported by the Synapse-L4 telemetry layer.
-
-Anomaly details:
-- Status: {status}
-- Metric value: {metric_value}
-- Anomaly score: {anomaly_score}
-- Source ID: {source_id}
-- Emitted at: {emitted_at}
-
-Relevant compliance policy context:
-{policy_context}
-
-Produce a structured compliance audit narrative. Respond ONLY with valid JSON matching this schema exactly:
-{
-  "narrative": "<one or two sentence audit summary>",
-  "risk_level": "<low|medium|high|critical>",
-  "policy_refs": ["<policy id or title>"],
-  "confidence": <float 0.0-1.0>
-}
-```
+See [`compliance-audit-narrative.txt`](compliance-audit-narrative.txt) — this is the live template loaded by both drivers at runtime.
 
 ---
 
@@ -51,5 +37,6 @@ Produce a structured compliance audit narrative. Respond ONLY with valid JSON ma
 
 ## Notes
 
-- `responseMimeType: application/json` is set on the request but Gemini Flash may still wrap output in markdown fences — strip before parsing.
-- If policy RAG fails, `{policy_context}` falls back to `"No specific policy context retrieved."` and the call proceeds.
+- **GeminiDriver:** `responseMimeType: application/json` is set on the request, but Gemini Flash may still wrap output in markdown fences — strip before parsing.
+- **OpenRouterDriver:** no structured-output mode available; JSON compliance is prompt-enforced only. `parseResponse()` strips fences and falls back to `{narrative: null, risk_level: "unknown"}` if the model ignores the instruction.
+- If policy RAG fails, `{policy_context}` falls back to `"No specific policy context retrieved."` and the call proceeds in both drivers.

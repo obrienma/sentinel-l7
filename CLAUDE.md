@@ -110,6 +110,14 @@ These are separate from Redis Streams — plain key/value `SET`/`GET`, not strea
 - Architecture tests in `tests/Architecture/` are the most critical; run them after any change to `App\Services\Sentinel\Logic`.
 - No frontend tests yet; Vitest + React Testing Library is the intended approach when added.
 
+## Prompts
+All LLM prompt templates must live in `prompts/` as versioned Markdown files. When a prompt is created or changed:
+- Create or update the file in `prompts/` (e.g. `prompts/compliance-audit-narrative.md`)
+- Increment the `**Version:**` field and add a changelog entry
+- List every driver or service that uses the prompt under `**Used by:**`
+
+Never hardcode a prompt only inside a service class without a corresponding `prompts/` file.
+
 ## ADR files
 Create decision logs according to https://martinfowler.com/bliki/ArchitectureDecisionRecord.html
 

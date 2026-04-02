@@ -997,6 +997,62 @@ The compliance dashboard paginates to 25 per page. Watching rapid terminal outpu
 
 ---
 
+## Phase: OpenRouterDriver — `SENTINEL_AI_DRIVER=openrouter`
+*Date: 2026-04-01*
+
+### Summary
+Implemented the `OpenRouterDriver` as a drop-in swap for `GeminiDriver`. Uses the OpenRouter API (`https://openrouter.ai/api/v1/chat/completions`) with OpenAI-compatible request format. Same policy RAG pipeline, same prompt, same response schema — only the HTTP transport differs. Added `openrouter` block to `config/services.php`, `OPENROUTER_API_KEY` and `OPENROUTER_MODEL` to `.env.example`, and 6 unit tests covering happy path, markdown fence stripping, malformed responses, 401 errors, RAG failure fallback, and Authorization header assertion.
+
+---
+
+### Patterns
+
+**OpenAI-compatible API format (messages array)**
+OpenRouter accepts the standard OpenAI chat completions format: `{ model, messages: [{role, content}] }`. The response path is `choices.0.message.content` — a string containing the model's reply. This is the de facto standard for LLM API compatibility and works across OpenRouter, OpenAI, and many self-hosted endpoints.
+
+**Q:** What is the structural difference between a Gemini API request and an OpenRouter/OpenAI-compatible request?
+**A:** Gemini wraps the prompt in `contents: [{parts: [{text: ...}]}]` and returns via `candidates.0.content.parts.0.text`. OpenRouter (OpenAI format) uses `messages: [{role: "user", content: ...}]` and returns via `choices.0.message.content`. Auth also differs: Gemini uses a `?key=` query param; OpenRouter uses `Authorization: Bearer` header.
+
+---
+
+**Driver interoperability via a shared prompt and return schema**
+Both `GeminiDriver` and `OpenRouterDriver` build identical prompts and expect the model to return the same JSON schema `{narrative, risk_level, policy_refs, confidence}`. `parseResponse()` is identical in both. This means the `ComplianceDriver` contract is truly honoured — switching drivers with an env var produces semantically equivalent output regardless of the underlying model.
+
+**Q:** What makes two AI drivers genuinely interchangeable rather than just interface-compatible?
+**A:** Identical prompt text, identical expected response schema, and identical response parsing. If the prompt changes between drivers, models may produce different output shapes even if both return the same field names. True interoperability requires the same prompt contract across drivers.
+
+---
+
+### Anti-Patterns
+
+**Relying on `responseMimeType: application/json` for structured output**
+Gemini supports a `generationConfig.responseMimeType` parameter that forces the model to emit valid JSON. OpenRouter (and most other providers) do not support this — they rely on the prompt instruction alone. The mitigation is a clear prompt instruction (`"Respond ONLY with valid JSON"`) combined with a `parseResponse()` fallback that handles prose or unexpected shapes gracefully rather than throwing.
+
+**Q:** Why can't `OpenRouterDriver` use structured output mode the way `GeminiDriver` does?
+**A:** `responseMimeType: application/json` is a Gemini-specific parameter. OpenRouter routes to many different models; enforced JSON output is model-dependent. The driver falls back to prompt-based instruction + `parseResponse()` fallback for malformed replies.
+
+---
+
+### Challenges
+
+**No pre-existing test pattern for compliance drivers**
+There was no `GeminiDriverTest` to reference for structure. The test suite had to be designed from scratch: `Http::fake()` for the API layer, Mockery for `EmbeddingService` and `VectorCacheService`, and a helper `mockOpenRouterDriver()` to reduce setup boilerplate across test cases. The Authorization header assertion (`Http::assertSent()`) was the most useful test — it catches misconfigured auth without requiring a live API call.
+
+**Q:** How do you assert that a specific HTTP header was sent in a Laravel test without hitting a real API?
+**A:** Use `Http::fake()` to intercept the request, then `Http::assertSent(fn($req) => $req->hasHeader('Authorization', 'Bearer ...'))` after the call. `Http::fake()` records all outbound requests, so `assertSent` can inspect headers, body, and URL.
+
+---
+
+### Decisions
+
+**Default model: `meta-llama/llama-3.3-8b-instruct:free`**
+Chosen because it's on OpenRouter's free tier (no cost, no quota), capable enough to follow a JSON-only instruction, and available without a paid plan. Overridable via `OPENROUTER_MODEL` env var — switching to a paid model (e.g. `google/gemini-2.0-flash-001`) is a config change only.
+
+**30s timeout vs Gemini's 15s**
+Free-tier models on OpenRouter can queue behind paid requests and take longer to respond. 30s gives enough headroom for cold-start latency on free models without blocking the worker indefinitely.
+
+---
+
 ## Phase: Synapse-L4 XCLAIM Recovery — `sentinel:reclaim-axioms`
 *Date: 2026-04-01*
 

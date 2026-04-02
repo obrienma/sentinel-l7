@@ -42,6 +42,12 @@ return [
         'similarity_threshold' => env('UPSTASH_VECTOR_THRESHOLD', 0.90),
     ],
 
+    'openrouter' => [
+        'api_key' => env('OPENROUTER_API_KEY'),
+        'model'   => env('OPENROUTER_MODEL', 'meta-llama/llama-3.3-8b-instruct:free'),
+        'url'     => 'https://openrouter.ai/api/v1/chat/completions',
+    ],
+
     'gemini' => [
         'api_key'       => env('GEMINI_API_KEY'),
         'embedding_url' => env(

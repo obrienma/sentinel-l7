@@ -30,7 +30,7 @@ The compliance/AML domain gave these problems real shape. The input isn't limite
 - [x] Core pipeline — Redis Streams, semantic cache, fault tolerance (XCLAIM)
 - [x] React 19 + shadcn/ui dashboard with live transaction feed
 - [x] MCP server (analyze_transaction, search_policies, get_recent_transactions)
-- [x] ComplianceDriver stack — GeminiDriver (Gemini Flash + policy RAG), OpenRouterDriver stub, ComplianceManager
+- [x] ComplianceDriver stack — GeminiDriver (Gemini Flash + policy RAG), OpenRouterDriver (OpenAI-compatible, swap via env), ComplianceManager
 - [x] Synapse-L4 Axiom ingestion — `synapse:axioms` Redis stream + `sentinel:watch-axioms` worker
 - [x] `compliance_events` audit trail — Postgres persistence with `source_id` correlation
 - [x] Policy RAG — `sentinel:ingest` chunking pipeline, `policies/` corpus, score-aware query formulation
@@ -319,7 +319,7 @@ php artisan sentinel:reset-metrics
 ## 🗺️ What I'd do next
 
 ### What's still ahead
-- **OpenRouterDriver** — implement the stub for `SENTINEL_AI_DRIVER=openrouter` provider switching; immediate mitigation when Gemini free-tier quota is exhausted
+- ~~**OpenRouterDriver**~~ — done; set `SENTINEL_AI_DRIVER=openrouter` + `OPENROUTER_API_KEY` in `.env` to activate
 - **Transaction history** — persist processed transactions to Postgres for historical search and filtering (currently ephemeral Redis live-feed only)
 - **Multi-tenancy** — tenant-scoped stream keys and data isolation; middleware placeholder exists in `routes/web.php`
 - **Compliance report export** — CSV/PDF export of flagged events for a date range
