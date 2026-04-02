@@ -115,6 +115,10 @@ Create decision logs according to https://martinfowler.com/bliki/ArchitectureDec
 
 ## TODO
 - **OpenRouterDriver** — implement the stub (`App\Services\Compliance\OpenRouterDriver`) for `SENTINEL_AI_DRIVER=openrouter` provider switching
+- **Transaction history** — persist processed transactions to a `transactions` Postgres table; currently only written to Redis live-feed list (ephemeral)
+- **Multi-tenancy** — tenant-scoped middleware on `routes/web.php` auth group + tenant-prefixed stream keys; placeholder comment exists in routes file
+- **Compliance report export** — CSV/PDF export endpoint for flagged `compliance_events` by date range
+- **EventHorizon deep-link** — cross-system lookup from `compliance_events.source_id` back to the originating EventHorizon event
 
 ## Pending ADRs
 - **ADR-0016** (TODO): Synapse-L4 Axiom ingestion — how Sentinel-L7 receives validated Axioms from the Synapse-L4 sidecar. Decisions needed: new Redis stream key (`synapse:axioms`) vs. existing transaction stream; how `anomaly_score` routes to audit narrative generation; `source_id` correlation back to EventHorizon events. Stub at `docs/adr/0016-synapse-l4-axiom-ingestion.md`.

@@ -15,7 +15,9 @@ I built this to get hands-on with a few specific problems:
 - **Fault tolerance in a worker process** — what happens when a worker crashes mid-job?
 - **Clean architecture under Laravel** — keeping domain logic decoupled from infrastructure
 
-The compliance/AML domain gave these problems real shape: financial transaction processing has hard reliability requirements, which made the design decisions feel meaningful rather than academic.
+The compliance/AML domain gave these problems real shape. The input isn't limited to financial transactions — data can come from anywhere: financial events, medical access logs, SaaS API activity, or raw system telemetry. The Synapse-L4 sidecar handles the telemetry path: a validation node between EventHorizon (ingestion) and Sentinel-L7 (caching), it uses Pydantic to enforce strict schema contracts on LLM outputs — converting probabilistic model responses into deterministic, structured Axioms. Sentinel-L7 doesn't care about the source — it cares about whether the data exceeds a risk threshold and what the applicable policy says.
+
+→ [📋 User Stories](docs/USER_STORIES.md) — compliance officer, platform engineer, AI agent
 
 ---
 
@@ -317,6 +319,10 @@ This required building the full `ComplianceDriver` stack that was designed in AD
 ### What's still ahead
 - **OpenRouterDriver** — implement the stub for `SENTINEL_AI_DRIVER=openrouter` provider switching
 - **XCLAIM recovery for Axiom stream** — extend the Safety Reclaimer to handle the `synapse:axioms` consumer group (same XCLAIM pattern as the transactions stream)
+- **Transaction history** — persist processed transactions to Postgres for historical search and filtering (currently ephemeral Redis live-feed only)
+- **Multi-tenancy** — tenant-scoped stream keys and data isolation; middleware placeholder exists in `routes/web.php`
+- **Compliance report export** — CSV/PDF export of flagged events for a date range
+- **EventHorizon deep-link** — `source_id` correlation from compliance event back to the originating EventHorizon event
 - **OpenRouterDriver** — implement the stub for `SENTINEL_AI_DRIVER=openrouter` provider switching
 - **OAuth on the MCP endpoint** — `Mcp::oauthRoutes()` before production agent access
 - **CI pipeline** — architecture tests + unit suite running on every push
