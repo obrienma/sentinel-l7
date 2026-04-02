@@ -71,6 +71,10 @@ On a cache miss, a second namespace containing indexed regulatory policy documen
 
 A separate reclaimer process monitors the stream's Pending Entry List. If a worker crashes mid-processing, the reclaimer detects the idle message and re-assigns it via `XCLAIM`. Zero message loss.
 
+### Axiom ingestion (Synapse-L4 → Postgres audit trail)
+
+Validated Axioms from the Synapse-L4 sidecar arrive on a dedicated `synapse:axioms` Redis stream. A separate worker (`sentinel:watch-axioms`) consumes them independently of the transaction pipeline. Every Axiom is persisted to Postgres (`compliance_events`) regardless of score — no silent drops. When `anomaly_score > 0.8`, the worker fetches relevant policy context from the `policies` vector namespace and sends the Axiom to Gemini Flash for an AI-generated audit narrative. The compliance dashboard surfaces these events with narratives, risk levels, and `source_id` correlation back to EventHorizon.
+
 ### AI driver abstraction (Service Manager pattern)
 
 The AI backend is resolved through a `ComplianceManager` that extends Laravel's `Manager` class. Swapping from Gemini to OpenRouter (or any other backend) is a config change, not a code change. The domain logic only ever depends on the `ComplianceDriver` interface.
@@ -103,30 +107,43 @@ graph TB
         T1[Finance Event]
         T2[Medical Access]
         T3[SaaS API Request]
+        SL4[Synapse-L4 Sidecar]
         IdP[OAuth 2.0 / OIDC Provider]
     end
 
     subgraph "2. Infrastructure (Railway)"
         Web[Web Dashboard - Inertia/React]
         Worker[Sentinel Consumer - PHP]
+        AxiomWorker[Axiom Consumer - PHP]
         Reclaimer[Safety Reclaimer - PHP]
     end
 
     subgraph "3. Data & Memory (Upstash)"
-        Stream[(Redis Stream)]
+        Stream[(Redis Stream\ntransactions)]
+        AxiomStream[(Redis Stream\nsynapse:axioms)]
         VectorCache[(Vector: Namespace Default)]
         VectorRules[(Vector: Namespace Policies)]
     end
 
+    subgraph "4. Persistence (Neon)"
+        PG[(PostgreSQL\ncompliance_events)]
+    end
+
     Web <-->|OIDC Auth| IdP
     T1 & T2 & T3 -->|Tenant-Scoped XADD| Stream
+    SL4 -->|XADD Axioms| AxiomStream
     Stream -.->|XREADGROUP| Worker
+    AxiomStream -.->|XREAD| AxiomWorker
     Worker -->|2a. Search Cache| VectorCache
     Worker -->|2b. Fetch Policies| VectorRules
     Worker -->|3. Reasoning| AI[Gemini Flash]
     Reclaimer -.->|XCLAIM Zombie Tasks| Stream
     Worker -.->|Real-time Feed| Web
     Worker -->|Update Cache| VectorCache
+    AxiomWorker -->|score > 0.8: Fetch Policies| VectorRules
+    AxiomWorker -->|score > 0.8: Audit Narrative| AI
+    AxiomWorker -->|Persist Every Axiom| PG
+    Web -->|Query Events| PG
 ```
 
 ### Processing Loop
@@ -157,6 +174,33 @@ sequenceDiagram
     end
 
     W->>S: Acknowledge (XACK)
+```
+
+### Axiom Ingestion (Synapse-L4 → Compliance Events)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant SL4 as Synapse-L4
+    participant AS as synapse:axioms
+    participant AW as Axiom Worker
+    participant V as Upstash Vector
+    participant G as Gemini AI
+    participant DB as Postgres
+
+    SL4->>AS: XADD (source_id, anomaly_score, status)
+    AS->>AW: XREAD BLOCK 2000
+
+    alt anomaly_score > 0.8
+        note over AW,V: Policy Retrieval (Namespace: policies, ≥ 0.70)
+        AW->>V: Fetch Regulatory Context
+        V-->>AW: Policy Chunks
+        AW->>G: Analyze Axiom + Policy Context
+        G-->>AW: Audit Narrative + Risk Level
+        AW->>DB: INSERT compliance_events (routed_to_ai=true)
+    else score ≤ 0.8
+        AW->>DB: INSERT compliance_events (routed_to_ai=false)
+    end
 ```
 
 ### Message Lifecycle (Fault Tolerance)
