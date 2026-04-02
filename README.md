@@ -15,15 +15,15 @@ I built this to get hands-on with a few specific problems:
 - **Fault tolerance in a worker process** — what happens when a worker crashes mid-job?
 - **Clean architecture under Laravel** — keeping domain logic decoupled from infrastructure
 
-The compliance/AML domain gave these problems real shape. The input isn't limited to financial transactions — data can come from anywhere: financial events, medical access logs, SaaS API activity, or raw system telemetry. The Synapse-L4 sidecar handles the telemetry path: a validation node between EventHorizon (ingestion) and Sentinel-L7 (caching), it uses Pydantic to enforce strict schema contracts on LLM outputs — converting probabilistic model responses into deterministic, structured Axioms. Sentinel-L7 doesn't care about the source — it cares about whether the data exceeds a risk threshold and what the applicable policy says.
+The compliance/AML domain gave these problems real shape. The input isn't limited to financial transactions — data can come from anywhere: financial events, medical access logs, SaaS API activity, or raw system telemetry. The [Synapse-L4](https://github.com/obrienma/synapse-l4) sidecar handles the [EventHorizon telemetry](https://github.com/obrienma/EventHorizon) path: it validates raw events through an LLM judge pass and emits typed, scored Axioms into the pipeline. Sentinel-L7 doesn't care about the source — it cares about whether the data exceeds a risk threshold and what the applicable policy says.
 
 → [📋 User Stories](docs/USER_STORIES.md) — compliance officer, platform engineer, AI agent
 
 ---
 
 ![ezgif-sentinel-dash](https://github.com/user-attachments/assets/30673fc0-eee5-43ae-ac4f-e76b49bc550f)
-
 ![ezgif-sentinel-term](https://github.com/user-attachments/assets/cca0a4f7-7d69-4382-8a4e-e17a5d2ee0cf)
+![ezgif-sentinel-compliance](https://github.com/user-attachments/assets/666c862e-351c-4bec-be67-25cd69716864)
 
 ## 📊 Status
 
@@ -35,7 +35,7 @@ The compliance/AML domain gave these problems real shape. The input isn't limite
 - [x] `compliance_events` audit trail — Postgres persistence with `source_id` correlation
 - [x] Policy RAG — `sentinel:ingest` chunking pipeline, `policies/` corpus, score-aware query formulation
 - [x] Synapse-L4 Python sidecar — FastAPI LLM judge pass + Redis emitter
-- [x] Compliance dashboard — Events nav pages surfacing `compliance_events`. Default view is flagged events only, toggle to show all.
+- [x] Compliance dashboard — Flags / Events nav pages surfacing `compliance_events`
 - [ ] XCLAIM recovery for `synapse:axioms` consumer group
 - [ ] MCP OAuth — `Mcp::oauthRoutes()` for production agent access
 - [ ] CI pipeline — architecture tests + unit suite on every push
