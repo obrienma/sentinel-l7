@@ -994,3 +994,4 @@ The compliance dashboard paginates to 25 per page. Watching rapid terminal outpu
 
 **OpenRouter as the immediate mitigation for quota exhaustion**
 `SENTINEL_AI_DRIVER=openrouter` in `.env` switches the driver without code changes. The `OpenRouterDriver` stub exists but is not yet implemented — implementing it is the next TODO. Until then, waiting for quota reset or paying for the Gemini API tier are the only options.
+
