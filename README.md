@@ -17,7 +17,7 @@ I built this to get hands-on with a few specific problems:
 
 The compliance/AML domain gave these problems real shape. The input isn't limited to financial transactions — data can come from anywhere: financial events, medical access logs, SaaS API activity, or raw system telemetry. The [Synapse-L4](https://github.com/obrienma/synapse-l4) sidecar handles the [EventHorizon telemetry](https://github.com/obrienma/EventHorizon) path: it validates raw events through an LLM judge pass and emits typed, scored Axioms into the pipeline. Sentinel-L7 doesn't care about the source — it cares about whether the data exceeds a risk threshold and what the applicable policy says.
 
-→ [📋 User Stories](docs/USER_STORIES.md) — compliance officer, platform engineer, AI agent
+📋[User Stories](docs/USER_STORIES.md) — compliance officer, platform engineer, AI agent
 
 ---
 
