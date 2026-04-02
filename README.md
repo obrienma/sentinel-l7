@@ -36,7 +36,7 @@ The compliance/AML domain gave these problems real shape. The input isn't limite
 - [x] Policy RAG — `sentinel:ingest` chunking pipeline, `policies/` corpus, score-aware query formulation
 - [x] Synapse-L4 Python sidecar — FastAPI LLM judge pass + Redis emitter
 - [x] Compliance dashboard — Flags / Events nav pages surfacing `compliance_events`
-- [ ] XCLAIM recovery for `synapse:axioms` consumer group
+- [x] XCLAIM recovery for `synapse:axioms` consumer group — `sentinel:reclaim-axioms` command
 - [ ] MCP OAuth — `Mcp::oauthRoutes()` for production agent access
 - [ ] CI pipeline — architecture tests + unit suite on every push
 
@@ -75,7 +75,9 @@ A separate reclaimer process monitors the stream's Pending Entry List. If a work
 
 ### Axiom ingestion (Synapse-L4 → Postgres audit trail)
 
-Validated Axioms from the Synapse-L4 sidecar arrive on a dedicated `synapse:axioms` Redis stream. A separate worker (`sentinel:watch-axioms`) consumes them independently of the transaction pipeline. Every Axiom is persisted to Postgres (`compliance_events`) regardless of score — no silent drops. When `anomaly_score > 0.8`, the worker fetches relevant policy context from the `policies` vector namespace and sends the Axiom to Gemini Flash for an AI-generated audit narrative. The compliance dashboard surfaces these events with narratives, risk levels, and `source_id` correlation back to EventHorizon.
+Validated Axioms from the Synapse-L4 sidecar arrive on a dedicated `synapse:axioms` Redis stream. A separate worker (`sentinel:watch-axioms`) consumes them independently of the transaction pipeline using `XREADGROUP` — messages sit in the Pending Entry List until explicitly `XACK`'d after successful processing. Every Axiom is persisted to Postgres (`compliance_events`) regardless of score — no silent drops. When `anomaly_score > 0.8`, the worker fetches relevant policy context from the `policies` vector namespace and sends the Axiom to Gemini Flash for an AI-generated audit narrative. The compliance dashboard surfaces these events with narratives, risk levels, and `source_id` correlation back to EventHorizon.
+
+A dedicated reclaimer (`sentinel:reclaim-axioms`) polls the PEL every 30 seconds and uses `XAUTOCLAIM` to recover any Axiom that has been idle for over 60 seconds — zombie messages from a crashed worker are automatically reprocessed.
 
 ### AI driver abstraction (Service Manager pattern)
 
@@ -191,7 +193,7 @@ sequenceDiagram
     participant DB as Postgres
 
     SL4->>AS: XADD (source_id, anomaly_score, status)
-    AS->>AW: XREAD BLOCK 2000
+    AS->>AW: XREADGROUP (axiom-workers)
 
     alt anomaly_score > 0.8
         note over AW,V: Policy Retrieval (Namespace: policies, ≥ 0.70)
@@ -203,6 +205,11 @@ sequenceDiagram
     else score ≤ 0.8
         AW->>DB: INSERT compliance_events (routed_to_ai=false)
     end
+
+    AW->>AS: XACK (remove from PEL)
+
+    note over AS: Reclaimer (sentinel:reclaim-axioms) polls every 30s
+    note over AS: XAUTOCLAIM any message idle > 60s → reprocess
 ```
 
 ### Message Lifecycle (Fault Tolerance)
@@ -311,19 +318,12 @@ php artisan sentinel:reset-metrics
 
 ## 🗺️ What I'd do next
 
-### Synapse-L4 integration (ADR-0016 — in progress)
-Synapse-L4 is a Python/FastAPI sidecar that validates raw telemetry through an LLM judge pass and emits typed, immutable **Axioms** into a dedicated `synapse:axioms` Redis stream. Sentinel-L7 will consume this stream with a new worker process. When `anomaly_score > 0.8`, the Axiom is routed to Gemini Flash with policy RAG context for an AI-generated audit narrative. Every Axiom is persisted to Postgres (`compliance_events`) with its `source_id` for correlation back to EventHorizon — regardless of whether it triggered AI analysis.
-
-This required building the full `ComplianceDriver` stack that was designed in ADR-0006 but not yet implemented: a `ComplianceDriver` interface, `GeminiDriver` (Gemini Flash + policy RAG), `OpenRouterDriver` stub, and `ComplianceManager` (Laravel Service Manager pattern for provider switching).
-
 ### What's still ahead
-- **OpenRouterDriver** — implement the stub for `SENTINEL_AI_DRIVER=openrouter` provider switching
-- **XCLAIM recovery for Axiom stream** — extend the Safety Reclaimer to handle the `synapse:axioms` consumer group (same XCLAIM pattern as the transactions stream)
+- **OpenRouterDriver** — implement the stub for `SENTINEL_AI_DRIVER=openrouter` provider switching; immediate mitigation when Gemini free-tier quota is exhausted
 - **Transaction history** — persist processed transactions to Postgres for historical search and filtering (currently ephemeral Redis live-feed only)
 - **Multi-tenancy** — tenant-scoped stream keys and data isolation; middleware placeholder exists in `routes/web.php`
 - **Compliance report export** — CSV/PDF export of flagged events for a date range
 - **EventHorizon deep-link** — `source_id` correlation from compliance event back to the originating EventHorizon event
-- **OpenRouterDriver** — implement the stub for `SENTINEL_AI_DRIVER=openrouter` provider switching
 - **OAuth on the MCP endpoint** — `Mcp::oauthRoutes()` before production agent access
 - **CI pipeline** — architecture tests + unit suite running on every push
 

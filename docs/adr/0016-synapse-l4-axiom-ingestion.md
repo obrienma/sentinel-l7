@@ -80,5 +80,5 @@ SENTINEL_AI_DRIVER=gemini
 - [x] `anomaly_score` threshold documented and added to `.env.example`
 - [x] `source_id` stored in `compliance_events` (Postgres) for audit trail
 - [x] Synapse-L4 `src/clients/sentinel.py` — implemented in the Synapse-L4 repo
-- [ ] XCLAIM recovery for `synapse:axioms` consumer group (same pattern as `sentinel:reclaim` for transactions)
+- [x] XCLAIM recovery for `synapse:axioms` consumer group — `sentinel:reclaim-axioms` command via `ReclaimAxioms.php`
 - [ ] OpenRouterDriver stub to be fully implemented when `SENTINEL_AI_DRIVER=openrouter` is needed

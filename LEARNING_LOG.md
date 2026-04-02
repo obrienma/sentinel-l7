@@ -995,3 +995,75 @@ The compliance dashboard paginates to 25 per page. Watching rapid terminal outpu
 **OpenRouter as the immediate mitigation for quota exhaustion**
 `SENTINEL_AI_DRIVER=openrouter` in `.env` switches the driver without code changes. The `OpenRouterDriver` stub exists but is not yet implemented — implementing it is the next TODO. Until then, waiting for quota reset or paying for the Gemini API tier are the only options.
 
+---
+
+## Phase: Synapse-L4 XCLAIM Recovery — `sentinel:reclaim-axioms`
+*Date: 2026-04-01*
+
+### Summary
+Upgraded the Axiom worker from plain `XREAD` to `XREADGROUP`/`XACK` to give the `synapse:axioms` stream at-least-once delivery semantics, then added `sentinel:reclaim-axioms` — a reclaimer command that uses `XAUTOCLAIM` to recover Axioms that have been in the Pending Entry List for over 60 seconds. Added `ensureConsumerGroup()`, `readGroup()`, `ack()`, `claimPending()`, and `parseFields()` to `AxiomStreamService`. Updated `WatchAxiomsTest` to mock the new consumer group interface and added 10 new unit tests for the new service methods.
+
+---
+
+### Patterns
+
+**`XREADGROUP` + `XACK` for at-least-once delivery**
+Plain `XREAD` has no memory of delivery — if the worker crashes after reading but before processing, the message is gone from the worker's perspective. `XREADGROUP` places every delivered message into the Pending Entry List (PEL). The message stays in the PEL until `XACK` is called. If the worker dies, the message remains pending and a reclaimer can claim it.
+
+**Q:** What is the difference between `XREAD` and `XREADGROUP` for fault tolerance?
+**A:** `XREAD` is stateless — delivery is fire-and-forget. `XREADGROUP` maintains a Pending Entry List: every delivered-but-unacknowledged message is tracked. A crashed worker leaves its messages in the PEL where a reclaimer can find and reprocess them via `XCLAIM`/`XAUTOCLAIM`. `XREAD` provides at-most-once delivery; `XREADGROUP` + `XACK` provides at-least-once.
+
+---
+
+**`XAUTOCLAIM` over manual `XPENDING` + `XCLAIM`**
+`XAUTOCLAIM` atomically: scans the PEL for messages idle longer than the threshold, reassigns ownership to the calling consumer, and returns those messages — all in one round trip. The older pattern (`XPENDING` to list, then `XCLAIM` per message) requires two commands per message. `XAUTOCLAIM` was added in Redis 6.2; Upstash supports it.
+
+**Q:** Why prefer `XAUTOCLAIM` over `XPENDING` + `XCLAIM` for reclaimer logic?
+**A:** `XAUTOCLAIM` is one round trip: scan + reassign + return in a single command. `XPENDING` + `XCLAIM` requires reading the pending list first, then issuing a `XCLAIM` for each message — O(N) Redis calls. `XAUTOCLAIM` also accepts a `COUNT` cap so the reclaimer processes a bounded batch per iteration.
+
+---
+
+**`BUSYGROUP` swallow on consumer group creation**
+`XGROUP CREATE` fails with a `BUSYGROUP` error if the group already exists. On worker restart (common in dev and after deploys) this would cause a crash. Wrapping the call in a try/catch that ignores `BUSYGROUP` but re-throws all other errors makes `ensureConsumerGroup()` safe to call at startup unconditionally.
+
+**Q:** Why must `ensureConsumerGroup()` be called on every worker startup rather than just once during setup?
+**A:** The stream key and consumer group may not exist when the worker first starts (cold deploy, wiped Redis). `MKSTREAM` creates the key if absent. Re-calling `XGROUP CREATE` on an existing group returns `BUSYGROUP` which is caught and ignored — it's a no-op in the happy path but a lifesaver on first boot or after a Redis flush.
+
+---
+
+**Extracting `parseFields()` from the command to the service**
+The flat `[field, value, field, value, ...]` parsing logic was duplicated in `WatchAxioms` and would need to be repeated in `ReclaimAxioms`. Moving it to `AxiomStreamService::parseFields()` gives both commands a single place to get a normalized associative array, and makes it directly testable in `AxiomStreamServiceTest`.
+
+**Q:** Why is field parsing placed on `AxiomStreamService` rather than kept in each command?
+**A:** The flat field-value format is a Redis wire-format detail — it belongs with the class that owns the stream protocol, not scattered across consumers. Centralising it means the float-casting logic (for `anomaly_score`, `metric_value`) is tested once and applied consistently.
+
+---
+
+### Anti-Patterns
+
+**Implementing a reclaimer without consumer group semantics on the worker**
+A reclaimer only works if messages enter the PEL — which only happens with `XREADGROUP`. The original `WatchAxioms` used plain `XREAD`, so even if a reclaimer existed it would have nothing to claim. The fix was to upgrade the worker first, then add the reclaimer.
+
+**Q:** What happens if you add a reclaimer but the worker still uses plain `XREAD`?
+**A:** Nothing. `XREAD` never enters messages into the PEL. The PEL stays empty; `XAUTOCLAIM` returns no results on every poll. The reclaimer runs but is permanently a no-op.
+
+---
+
+### Challenges
+
+**Test mocks written against `read()` broke when WatchAxioms switched to `readGroup()`**
+`WatchAxiomsTest` mocked `AxiomStreamService::read()` with a `__test_stop__` escape hatch. After the command switched to `readGroup()`, `ensureConsumerGroup()`, `parseFields()`, and `ack()`, every test threw `BadMethodCallException` — Mockery rejects calls to unmocked methods. The fix was to update `mockAxiomStreamWithOneMessage()` to mock all four new methods, with `parseFields()` wired to run the actual conversion logic inline so tests still verify the processor receives correct types.
+
+**Q:** What Mockery behaviour catches you when you change a service's public API?
+**A:** Any method called on a `Mockery::mock()` instance that wasn't explicitly set up with `shouldReceive()` throws `BadMethodCallException`. Partial mocks (`Mockery::mock(Foo::class)->makePartial()`) allow unmocked methods to call through to the real implementation — useful for pure helpers like `parseFields()` — but full mocks require all called methods to be declared.
+
+---
+
+### Decisions
+
+**`XAUTOCLAIM` starting cursor always `0-0`**
+The reclaimer always starts scanning from the beginning of the PEL (`0-0`) rather than tracking a cursor across iterations. This is intentional: if the reclaimer restarts, it re-scans from the start and re-claims anything still idle. Because `claimPending()` caps at 10 messages per call and the reclaimer loops immediately when messages are found, the full PEL drains without needing cursor state.
+
+**`axiom-reclaimer` as a fixed consumer name**
+The reclaimer always uses the consumer name `axiom-reclaimer` rather than a dynamic name. There is only one reclaimer process; a fixed name keeps the PEL view clean and avoids accumulating ghost consumer entries in `XINFO CONSUMERS`.
+

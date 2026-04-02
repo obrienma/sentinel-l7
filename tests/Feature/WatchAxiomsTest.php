@@ -23,25 +23,48 @@ function fakeAxiomMessage(array $overrides = []): array
         $flat[] = $key;
         $flat[] = (string) ($value ?? '');
     }
+
     return ['1-0', $flat];
+}
+
+/**
+ * Build a parsed associative array from fakeAxiomMessage's flat payload,
+ * mirroring what AxiomStreamService::parseFields() would return.
+ */
+function parseFakeAxiomFlat(array $flat): array
+{
+    $data = [];
+    for ($i = 0; $i < count($flat); $i += 2) {
+        $data[$flat[$i]] = $flat[$i + 1];
+    }
+    if (isset($data['anomaly_score'])) {
+        $data['anomaly_score'] = (float) $data['anomaly_score'];
+    }
+    if (isset($data['metric_value'])) {
+        $data['metric_value'] = (float) $data['metric_value'];
+    }
+
+    return $data;
 }
 
 function mockAxiomStreamWithOneMessage(array $overrides = []): \Mockery\MockInterface
 {
     $calls = 0;
+    $msg   = fakeAxiomMessage($overrides);
 
     $mock = Mockery::mock(AxiomStreamService::class);
-    $mock->shouldReceive('read')
-        ->andReturnUsing(function () use (&$calls, $overrides) {
+    $mock->shouldReceive('ensureConsumerGroup')->andReturnNull();
+    $mock->shouldReceive('readGroup')
+        ->andReturnUsing(function () use (&$calls, $msg) {
             $calls++;
             if ($calls === 1) {
-                return [
-                    'messages' => [fakeAxiomMessage($overrides)],
-                    'cursor'   => '1-0',
-                ];
+                return ['messages' => [$msg]];
             }
             throw new \RuntimeException('__test_stop__');
         });
+    $mock->shouldReceive('parseFields')
+        ->andReturnUsing(fn (array $flat) => parseFakeAxiomFlat($flat));
+    $mock->shouldReceive('ack')->andReturnNull();
 
     return $mock;
 }
@@ -66,6 +89,7 @@ it('calls the processor once for each axiom message', function () {
     $processor->shouldReceive('process')
         ->andReturnUsing(function () use (&$callCount) {
             $callCount++;
+
             return ['source_id' => 'sensor-42', 'routed_to_ai' => true, 'risk_level' => 'high', 'narrative' => 'Audit.', 'elapsed_ms' => 1.0];
         });
 
@@ -85,6 +109,7 @@ it('passes the decoded axiom payload to the processor', function () {
         ->once()
         ->andReturnUsing(function ($data) use (&$received) {
             $received = $data;
+
             return ['source_id' => 'sensor-42', 'routed_to_ai' => false, 'risk_level' => 'low', 'narrative' => null, 'elapsed_ms' => 1.0];
         });
 
@@ -100,11 +125,12 @@ it('passes the decoded axiom payload to the processor', function () {
 });
 
 it('processes two axioms from the same read batch', function () {
-    $readCalls = 0;
+    $readCalls    = 0;
     $processCalls = 0;
 
     $stream = Mockery::mock(AxiomStreamService::class);
-    $stream->shouldReceive('read')->andReturnUsing(function () use (&$readCalls) {
+    $stream->shouldReceive('ensureConsumerGroup')->andReturnNull();
+    $stream->shouldReceive('readGroup')->andReturnUsing(function () use (&$readCalls) {
         $readCalls++;
         if ($readCalls === 1) {
             return [
@@ -112,16 +138,19 @@ it('processes two axioms from the same read batch', function () {
                     fakeAxiomMessage(['source_id' => 'sensor-1']),
                     fakeAxiomMessage(['source_id' => 'sensor-2']),
                 ],
-                'cursor' => '2-0',
             ];
         }
         throw new \RuntimeException('__test_stop__');
     });
+    $stream->shouldReceive('parseFields')
+        ->andReturnUsing(fn (array $flat) => parseFakeAxiomFlat($flat));
+    $stream->shouldReceive('ack')->andReturnNull();
 
     $processor = Mockery::mock(AxiomProcessorService::class);
     $processor->shouldReceive('process')
         ->andReturnUsing(function () use (&$processCalls) {
             $processCalls++;
+
             return ['source_id' => '?', 'routed_to_ai' => false, 'risk_level' => 'low', 'narrative' => null, 'elapsed_ms' => 1.0];
         });
 
