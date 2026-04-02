@@ -14,7 +14,7 @@ Project-specific guidance for Claude Code when working in this repository.
 
 ```bash
 composer dev-full          # web + worker + reclaimer (all three processes)
-composer dev               # web + queue + logs + vite (dashboard dev)
+composer dev               # web + queue + logs + vite + axioms watcher (dashboard dev)
 composer test              # Pest test suite
 
 php artisan sentinel:stream --limit=100   # simulate transaction stream
@@ -32,6 +32,7 @@ Three processes run concurrently in production:
 |---------|---------|------|
 | Web | `php artisan serve` | Inertia/React dashboard |
 | Worker | `php artisan sentinel:watch` | Redis Stream consumer |
+| Axioms Worker | `php artisan sentinel:watch-axioms` | Synapse-L4 Axiom consumer |
 | Reclaimer | `php artisan sentinel:reclaim` | XCLAIM recovery for zombie messages |
 
 **Per-transaction pipeline (worker):**
@@ -51,6 +52,7 @@ Tier 3 fallback: if embedding or vector search throws, `ThreatAnalysisService` r
 | `app/Services/TransactionProcessorService.php` | Core pipeline — cache hit/miss/fallback logic |
 | `app/Services/ThreatAnalysisService.php` | Tier 3 rule-based fallback |
 | `app/Console/Commands/` | Artisan commands (stream, watch, ingest, reset-metrics) |
+| `app/Http/Controllers/ComplianceController.php` | Compliance events page — paginated, flagged/all toggle |
 | `app/Mcp/` | MCP server and tools (added 2026-03-23) |
 | `resources/js/Pages/` | Inertia page components (.jsx) |
 | `resources/js/components/ui/` | shadcn/ui components (owned in-repo) |
@@ -110,6 +112,9 @@ These are separate from Redis Streams — plain key/value `SET`/`GET`, not strea
 
 ## ADR files
 Create decision logs according to https://martinfowler.com/bliki/ArchitectureDecisionRecord.html
+
+## TODO
+- **OpenRouterDriver** — implement the stub (`App\Services\Compliance\OpenRouterDriver`) for `SENTINEL_AI_DRIVER=openrouter` provider switching
 
 ## Pending ADRs
 - **ADR-0016** (TODO): Synapse-L4 Axiom ingestion — how Sentinel-L7 receives validated Axioms from the Synapse-L4 sidecar. Decisions needed: new Redis stream key (`synapse:axioms`) vs. existing transaction stream; how `anomaly_score` routes to audit narrative generation; `source_id` correlation back to EventHorizon events. Stub at `docs/adr/0016-synapse-l4-axiom-ingestion.md`.

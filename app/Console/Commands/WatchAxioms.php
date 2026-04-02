@@ -23,7 +23,20 @@ class WatchAxioms extends Command
             $cursor = $read['cursor'];
 
             foreach ($read['messages'] as $streamMsg) {
-                $data     = json_decode($streamMsg[1][1], true);
+                // Python sidecar publishes individual fields, not a JSON blob.
+                // Predis returns them as a flat [field, value, field, value, ...] array.
+                $flat = $streamMsg[1];
+                $data = [];
+                for ($i = 0; $i < count($flat); $i += 2) {
+                    $data[$flat[$i]] = $flat[$i + 1];
+                }
+                if (array_key_exists('anomaly_score', $data)) {
+                    $data['anomaly_score'] = (float) $data['anomaly_score'];
+                }
+                if (array_key_exists('metric_value', $data)) {
+                    $data['metric_value'] = (float) $data['metric_value'];
+                }
+
                 $sourceId = $data['source_id']    ?? '?';
                 $score    = $data['anomaly_score'] ?? '?';
                 $status   = $data['status']        ?? '?';

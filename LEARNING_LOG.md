@@ -812,3 +812,185 @@ Storing which AI driver processed each event (or `null` for sub-threshold) makes
 
 **Q:** What is stored in the `driver_used` column of `compliance_events`, and when is it null?
 **A:** The value of `config('sentinel.ai_driver')` at processing time (e.g., `"gemini"`, `"openrouter"`). It is `null` for sub-threshold events that were never sent to an AI driver.
+
+---
+
+## Phase: Compliance Dashboard
+*Files: `ComplianceController`, `Compliance.jsx`, `routes/web.php` | Date: 2026-04-01*
+
+### Summary
+Added the Compliance Events page — a paginated, auto-refreshing Inertia view over the `compliance_events` table. Default view shows flagged (AI-routed) events only; a toggle switches to all events. Wired the route, controller, and page component.
+
+---
+
+### Patterns
+
+**`router.reload({ only: ['events'] })` for partial refreshes**
+The compliance page polls every 5 seconds using Inertia's `router.reload({ only: ['events'] })`. This re-fetches only the `events` prop, not the full page — no layout re-mount, no flash of unstyled content. The user stays on their current page in the paginated list.
+
+**Q:** How does the compliance page stay live without a full page reload?
+**A:** `router.reload({ only: ['events'] })` in a `setInterval`. Inertia sends a partial XHR request and merges only the `events` prop into the current component state, leaving everything else untouched.
+
+---
+
+**`->through()` for controller-side response shaping**
+`ComplianceEvent::query()->paginate(25)->through(fn ($e) => [...])` transforms each model into a plain array before it leaves the controller. The page component receives a clean, explicit contract — no accidental model attribute leakage, no need for API resources.
+
+**Q:** Why use `->through()` on the paginator rather than a Laravel API Resource?
+**A:** For a single internal page, `->through()` is simpler — one anonymous function, explicit field list, no extra class. API Resources add value when the same shape is reused across multiple endpoints.
+
+---
+
+**Filter state in query string**
+`?flagged=1` / `?flagged=0` is the entire filter mechanism. `$request->boolean('flagged', true)` parses it; `router.get('/compliance', { flagged: ... })` sets it. No session state, no hidden form fields — the URL is the source of truth.
+
+**Q:** How is the flagged/all filter persisted across page navigations on the compliance page?
+**A:** In the query string. The controller reads `?flagged` via `$request->boolean('flagged', true)` and passes the current state back as `flaggedOnly`. The toggle button calls `router.get('/compliance', { flagged: 0|1 })` to update it.
+
+---
+
+### Anti-Patterns
+
+**Leaking Eloquent model attributes through `->toArray()`**
+Using `->toArray()` on the paginator would expose every column including internal fields. `->through()` with an explicit array is more defensive — only named fields reach the frontend.
+
+**Q:** Why is `->through()` preferred over `->toArray()` when shaping paginated data for Inertia?
+**A:** `->toArray()` passes every model attribute. `->through()` with an explicit shape is an intentional contract — adding a column to the table doesn't silently expose it to the frontend.
+
+---
+
+### Challenges
+
+No unexpected challenge. The Inertia pagination shape (`data`, `links`, `meta`) is well-documented; the `Pagination` component reads `links` directly from the paginator response. The only care needed was ensuring `preserveScroll: true` on the toggle and pagination clicks to avoid jumping back to the top of the page.
+
+---
+
+### Decisions
+
+**Default to flagged-only**
+`$request->boolean('flagged', true)` defaults to `true` — first visit shows AI-flagged events. Operators care about threats first; they opt in to the full list rather than having to filter down from noise.
+
+---
+
+## Phase: Dev Pipeline Integration + Cross-System Stream Format Bug
+*Files: `composer.json`, `AxiomStreamService.php`, `WatchAxioms.php`, `WatchAxiomsTest.php` | Date: 2026-04-01*
+
+### Summary
+Added `sentinel:watch-axioms` as the fifth process in `composer dev`. Diagnosed two separate bugs that caused the process to exit with code 1 and kill all other processes via `--kill-others`: (1) `BLOCK 0` causing a TCP read timeout on Upstash remote connections; (2) `WatchAxioms` expecting a JSON-encoded `data` field but the Python Synapse-L4 sidecar publishing individual stream fields instead. Fixed both; updated tests to reflect the real message format.
+
+---
+
+### Patterns
+
+**`BLOCK N` (finite) instead of `BLOCK 0` (indefinite) for remote Redis streams**
+`XREAD BLOCK 0` blocks the connection forever until a message arrives. Against a local Redis this is fine — the OS keeps the socket open. Against Upstash (remote TCP over TLS), the connection has a read timeout. After that timeout, Predis throws and the process exits with code 1. `BLOCK 2000` (2 seconds) returns null on timeout; the `while(true)` loop catches it and calls `XREAD` again. No exception, no crash.
+
+**Q:** Why use `BLOCK 2000` instead of `BLOCK 0` for XREAD against Upstash?
+**A:** Upstash is a remote TCP connection with a finite read timeout. `BLOCK 0` holds the connection open indefinitely; when Upstash's timeout fires, Predis throws an exception and the process exits. `BLOCK 2000` returns null after 2 seconds, the loop iterates cleanly, and no exception is thrown.
+
+---
+
+**Flat field-value array parsing for cross-language stream consumers**
+Predis `executeRaw(['XREAD', ...])` returns stream message fields as a flat indexed array: `['field1', 'value1', 'field2', 'value2', ...]`. The Python `redis-py` `xadd` call publishes each Axiom field individually (not JSON-wrapped). The PHP consumer must zip the flat array into an associative array before using field names as keys.
+
+```php
+$flat = $streamMsg[1]; // ['status', 'critical', 'metric_value', '94.0', ...]
+$data = [];
+for ($i = 0; $i < count($flat); $i += 2) {
+    $data[$flat[$i]] = $flat[$i + 1];
+}
+```
+
+**Q:** What does Predis return for stream message fields when using `executeRaw`, and how does this interact with a Python publisher?
+**A:** A flat indexed array: `['field', 'value', 'field', 'value', ...]`. Python's `redis-py` `xadd({'key': 'value'})` publishes individual fields. The PHP consumer must zip the flat array into a PHP associative array — you can't access fields by name directly from the raw Predis response.
+
+---
+
+### Anti-Patterns
+
+**Assuming message format parity between a PHP publisher and a Python publisher**
+`AxiomStreamService::publish()` wraps the payload as a single JSON-encoded `data` field (`XADD ... data '{"status":"critical",...}'`). The Python sidecar publishes each field individually (`XADD ... status critical metric_value 94.0 ...`). Both are valid uses of Redis Streams, but they produce incompatible message shapes for the consumer. The test suite used the PHP publisher's format — so tests passed while production failed silently.
+
+**Q:** What is the risk of writing tests that mock stream messages in the publisher's format when the real producer is a separate system?
+**A:** Tests pass against a format the real producer never emits. The bug only surfaces when the live cross-system flow runs. Test helpers should mirror the actual producer's format — in this case the Python sidecar's flat-field layout, not the PHP service's JSON-blob layout.
+
+---
+
+**`--kill-others` in `concurrently` amplifies any process crash**
+`--kill-others` is the right default for a dev script where you want all processes to die together on CTRL-C. But it means any process that exits with code 1 during startup — even transiently — kills the entire dev environment. The symptom (all processes dying) obscures the actual error (one process crashed). Always run the failing process in isolation first to read its real output before debugging the concurrently invocation.
+
+**Q:** What is the debugging approach when `--kill-others` in `concurrently` causes all processes to die?
+**A:** Run the crashing process directly (`php artisan sentinel:watch-axioms`) to read its actual error output — `concurrently` swallows early output and only shows the exit code. Isolate before diagnosing.
+
+---
+
+### Challenges
+
+**Two separate bugs with the same symptom**
+The process exited with code 1 both times, but for completely different reasons: first a TCP timeout from `BLOCK 0`, then a `TypeError` from a format mismatch. The TCP timeout only manifested when Redis had no incoming messages for an extended period — it passed the first quick test. The format bug only manifested when a real Python-published message arrived. Neither bug was detectable by reading the code alone; both required the live cross-system flow to reproduce.
+
+**Q:** What made these two bugs difficult to catch in isolation?
+**A:** The TCP timeout only triggers after the read timeout elapses with no traffic — a 5-second `timeout` in testing wouldn't hit it. The format mismatch only triggers when a Python-emitted message is in the stream — tests used a PHP-format mock. Both required real cross-system conditions to surface.
+
+---
+
+**Retroactive test format update**
+The test helper `fakeAxiomMessage` had to be updated to match the Python sidecar's flat-field format after the production bug was diagnosed. This is a case where the tests were internally consistent but externally wrong — they validated the wrong contract. Updating `fakeAxiomMessage` to emit `['status', 'critical', 'metric_value', '94.0', ...]` (flat) instead of `['data', '{"status":"critical",...}']` (JSON blob) corrected the contract and kept all 5 tests passing.
+
+**Q:** If `WatchAxiomsTest` was passing before the bug fix, why did the production consumer fail?
+**A:** The tests mocked the stream in the PHP publisher's format (single `data` JSON field). The real producer is the Python sidecar, which uses individual fields. The tests validated a format that no real producer ever emits — internal consistency masked an external contract bug.
+
+---
+
+### Decisions
+
+**Cast numeric fields in `WatchAxioms` after parsing**
+Python publishes all stream field values as strings (`str(axiom.anomaly_score)` → `'0.91'`). After zipping the flat array into `$data`, `anomaly_score` and `metric_value` are cast to `float` explicitly in `WatchAxioms`. This keeps `AxiomProcessorService` agnostic to the source format — it always receives typed values regardless of whether the producer is PHP or Python.
+
+**Q:** Why cast `anomaly_score` to float in `WatchAxioms` rather than in `AxiomProcessorService`?
+**A:** `AxiomProcessorService` already does `(float) ($data['anomaly_score'] ?? 0.0)`, but the processor should receive consistent types regardless of origin. Casting at the command level means the processor isn't responsible for knowing that Python publishes strings. Separation of concerns: command normalises the wire format, processor applies business logic.
+
+---
+
+## Phase: Operational Debugging — Backlog Drain + Quota + Pagination
+*Date: 2026-04-01*
+
+### Summary
+First live end-to-end run with 657 queued Axioms drained through `sentinel:watch-axioms`. Two operational issues surfaced: Gemini free-tier quota exhausted by the burst; and the compliance dashboard appeared to show "few" events despite the DB having 1,146 rows. Both were diagnosed with a single DB count query.
+
+---
+
+### Patterns
+
+**`php artisan tinker --execute` as a first-line persistence check**
+Before investigating controller logic or query bugs, running `ComplianceEvent::count()` in tinker immediately distinguishes "data isn't being written" from "data is written but not displayed". In this case the count was 1,146 — the write path was fine; the display was just paginated.
+
+**Q:** What is the fastest way to determine whether a persistence bug is in the write path or the read path?
+**A:** Query the DB directly — `php artisan tinker --execute="echo ModelName::count();"`. If the count matches expectations, the write path is fine and the issue is in the read/display layer. If the count is low, investigate the service or model.
+
+---
+
+### Anti-Patterns
+
+**Assuming a UI showing few rows means few rows were written**
+The compliance dashboard paginates to 25 per page. Watching rapid terminal output and then seeing only 25 rows on screen looks like a bug — but `meta.total` in the card header shows the real count. Always check `meta.total` (or query the DB) before suspecting the write path.
+
+**Q:** What UI signal on the compliance dashboard indicates the actual total record count, independent of pagination?
+**A:** The `meta.total` value displayed in the `CardHeader` of the events card. It reflects the full unpaginated count from the controller, not just the current page.
+
+---
+
+### Challenges
+
+**Gemini free-tier quota exhausted by backlog drain**
+657 messages had accumulated in `synapse:axioms`. Of those, a significant fraction had `anomaly_score > 0.8` and were routed to Gemini Flash. The free tier hit its per-minute and per-day limits almost immediately. The processor caught the 429 and persisted the `ComplianceEvent` with `audit_narrative = null`, so no data was lost — but narratives are missing for events processed during quota exhaustion. Mitigation: switch to `SENTINEL_AI_DRIVER=openrouter` or pace the drain.
+
+**Q:** What happens to a `ComplianceEvent` when Gemini returns a 429 during `routeToAi()`?
+**A:** The `try/catch(\Throwable)` in `routeToAi()` catches the 429 error, logs it at `Log::error`, and still calls `ComplianceEvent::create()` with `routed_to_ai = true` and `audit_narrative = null`. The row is persisted; only the narrative is missing. No data loss.
+
+---
+
+### Decisions
+
+**OpenRouter as the immediate mitigation for quota exhaustion**
+`SENTINEL_AI_DRIVER=openrouter` in `.env` switches the driver without code changes. The `OpenRouterDriver` stub exists but is not yet implemented — implementing it is the next TODO. Until then, waiting for quota reset or paying for the Gemini API tier are the only options.

@@ -17,7 +17,13 @@ function fakeAxiomMessage(array $overrides = []): array
         'emitted_at'    => '2026-03-31T14:22:11Z',
     ], $overrides);
 
-    return ['1-0', ['data', json_encode($data)]];
+    // Match Python sidecar format: flat [field, value, field, value, ...]
+    $flat = [];
+    foreach ($data as $key => $value) {
+        $flat[] = $key;
+        $flat[] = (string) ($value ?? '');
+    }
+    return ['1-0', $flat];
 }
 
 function mockAxiomStreamWithOneMessage(array $overrides = []): \Mockery\MockInterface

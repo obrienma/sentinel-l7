@@ -33,7 +33,7 @@ The compliance/AML domain gave these problems real shape: financial transaction 
 - [x] `compliance_events` audit trail — Postgres persistence with `source_id` correlation
 - [x] Policy RAG — `sentinel:ingest` chunking pipeline, `policies/` corpus, score-aware query formulation
 - [x] Synapse-L4 Python sidecar — FastAPI LLM judge pass + Redis emitter
-- [ ] Compliance dashboard — Flags / Events nav pages surfacing `compliance_events`
+- [x] Compliance dashboard — Events nav pages surfacing `compliance_events`. Default view is flagged events only, toggle to show all.
 - [ ] XCLAIM recovery for `synapse:axioms` consumer group
 - [ ] MCP OAuth — `Mcp::oauthRoutes()` for production agent access
 - [ ] CI pipeline — architecture tests + unit suite on every push
@@ -248,6 +248,9 @@ graph LR
 # Start web + worker + reclaimer
 composer dev-full
 
+# Start dashboard dev (web + queue + logs + vite + axioms worker)
+composer dev
+
 # Run a batch through the stream manually
 php artisan sentinel:stream --limit=100
 
@@ -268,8 +271,7 @@ Synapse-L4 is a Python/FastAPI sidecar that validates raw telemetry through an L
 This required building the full `ComplianceDriver` stack that was designed in ADR-0006 but not yet implemented: a `ComplianceDriver` interface, `GeminiDriver` (Gemini Flash + policy RAG), `OpenRouterDriver` stub, and `ComplianceManager` (Laravel Service Manager pattern for provider switching).
 
 ### What's still ahead
-- **Synapse-L4 Python sidecar** — the emitter side: FastAPI LLM judge pass + `src/clients/sentinel.py` Redis client
-- **Compliance dashboard** — surface `compliance_events` in the React frontend with AI narratives, risk levels, and EventHorizon correlation (enables the disabled Flags/Compliance nav pages)
+- **OpenRouterDriver** — implement the stub for `SENTINEL_AI_DRIVER=openrouter` provider switching
 - **XCLAIM recovery for Axiom stream** — extend the Safety Reclaimer to handle the `synapse:axioms` consumer group (same XCLAIM pattern as the transactions stream)
 - **OpenRouterDriver** — implement the stub for `SENTINEL_AI_DRIVER=openrouter` provider switching
 - **OAuth on the MCP endpoint** — `Mcp::oauthRoutes()` before production agent access

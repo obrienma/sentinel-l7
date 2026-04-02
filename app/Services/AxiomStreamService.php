@@ -30,7 +30,7 @@ class AxiomStreamService
      */
     public function read(string $lastId = '$'): array
     {
-        $results = LRedis::executeRaw(['XREAD', 'BLOCK', '0', 'STREAMS', self::STREAM_KEY, $lastId]);
+        $results = LRedis::executeRaw(['XREAD', 'BLOCK', '2000', 'STREAMS', self::STREAM_KEY, $lastId]);
 
         if (!$results) {
             return ['messages' => [], 'cursor' => $lastId];
