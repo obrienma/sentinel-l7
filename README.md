@@ -20,8 +20,8 @@ The compliance/AML domain gave these problems real shape: financial transaction 
 ---
 
 ![ezgif-sentinel-dash](https://github.com/user-attachments/assets/30673fc0-eee5-43ae-ac4f-e76b49bc550f)
-
 ![ezgif-sentinel-term](https://github.com/user-attachments/assets/cca0a4f7-7d69-4382-8a4e-e17a5d2ee0cf)
+![ezgif-sentinel-compliance](https://github.com/user-attachments/assets/666c862e-351c-4bec-be67-25cd69716864)
 
 ## 📊 Status
 
@@ -33,7 +33,7 @@ The compliance/AML domain gave these problems real shape: financial transaction 
 - [x] `compliance_events` audit trail — Postgres persistence with `source_id` correlation
 - [x] Policy RAG — `sentinel:ingest` chunking pipeline, `policies/` corpus, score-aware query formulation
 - [x] Synapse-L4 Python sidecar — FastAPI LLM judge pass + Redis emitter
-- [ ] Compliance dashboard — Flags / Events nav pages surfacing `compliance_events`
+- [x] Compliance dashboard — Flags / Events nav pages surfacing `compliance_events`
 - [ ] XCLAIM recovery for `synapse:axioms` consumer group
 - [ ] MCP OAuth — `Mcp::oauthRoutes()` for production agent access
 - [ ] CI pipeline — architecture tests + unit suite on every push
