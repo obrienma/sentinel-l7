@@ -1123,3 +1123,60 @@ The reclaimer always starts scanning from the beginning of the PEL (`0-0`) rathe
 **`axiom-reclaimer` as a fixed consumer name**
 The reclaimer always uses the consumer name `axiom-reclaimer` rather than a dynamic name. There is only one reclaimer process; a fixed name keeps the PEL view clean and avoids accumulating ghost consumer entries in `XINFO CONSUMERS`.
 
+---
+
+## Phase: Transaction History — Postgres Persistence
+*Date: 2026-04-28*
+
+### Summary
+Fulfilled the "Transaction history" TODO: processed transactions are now persisted to a Postgres `transactions` table on every pipeline path (cache hit, cache miss, fallback). Added `Transaction` Eloquent model with `$fillable` and `$casts`, a migration with an indexed `txn_id` column and nullable `amount`/`currency`, and threaded `rawAmount` (float) through `recordTransaction()` so the DB stores a numeric value rather than a formatted display string. Added 9 unit tests covering persistence correctness, `observe=false` suppression, and edge-case field extraction.
+
+---
+
+### Patterns
+
+**Separate raw numeric from formatted display value early**
+`TransactionProcessorService` previously held a single `$amount` string (`number_format(...)`) used for both display and internal passing. Splitting into `$rawAmount` (float|null) and `$amount` (formatted string) at the point of extraction keeps the type correct for the DB column while leaving the display string unchanged everywhere else.
+
+**Q:** Why split `$rawAmount` and `$amount` rather than re-parsing the formatted string before the DB write?
+**A:** `number_format()` produces a locale-aware string (`"1,500.00"`). Re-parsing it with `(float)` loses commas only if the locale uses `.` as decimal — fragile. Retaining the original float sidesteps the round-trip entirely and keeps the DB column correctly typed as `decimal(15,2)`.
+
+---
+
+**`observe` flag as a single gate for all side-effects**
+The `observe` parameter suppresses Redis LPUSH, metric increments, *and* the DB write in a single branch. This keeps the "dry run" contract complete — callers that pass `observe=false` (e.g. the MCP tool) get no observable state changes at all.
+
+**Q:** Why should the `Transaction::create()` call be inside the `observe` guard rather than always running?
+**A:** `observe=false` is the contract for read-only / test-mode calls. Writing to Postgres despite that flag would surprise callers (e.g. the MCP `analyze_transaction` tool) and pollute the transaction history with synthetic data.
+
+---
+
+**`RefreshDatabase` on unit tests that hit Eloquent**
+Tests that exercise `Transaction::create()` need a real schema. Using `RefreshDatabase` wraps each test in a transaction that rolls back, giving isolation without manual teardown. The `uses(Tests\TestCase::class, RefreshDatabase::class)` declaration at file level applies it to every test in the file.
+
+**Q:** What is the effect of `RefreshDatabase` in Pest compared to `DatabaseMigrations`?
+**A:** `RefreshDatabase` runs migrations once per test run and wraps each test in a DB transaction rolled back on teardown — fast. `DatabaseMigrations` re-runs the full migration up/down for every test — correct but slow. For unit tests that don't need schema changes between tests, `RefreshDatabase` is preferred.
+
+---
+
+### Anti-Patterns
+
+**Storing the formatted display string in a numeric DB column**
+The original `$amount` was `number_format((float) $data['amount'], 2)` — a string like `"150.00"`. Passing that to a `decimal(15,2)` column works in MySQL (implicit cast) but is semantically wrong and breaks on locales that use comma as the decimal separator. The fix is to keep the float, not the string.
+
+---
+
+### Challenges
+
+**No challenge was encountered.** The migration, model, and service change were straightforward. The only decision of note was where to thread `rawAmount` — passing it as an optional trailing parameter to `recordTransaction()` kept the call-site diff minimal across all three pipeline branches (cache hit, cache miss, fallback).
+
+---
+
+### Decisions
+
+**`txn_id` indexed, not unique**
+The `transactions` table indexes `txn_id` but does not apply a `UNIQUE` constraint. Stream messages can be redelivered (XCLAIM recovery), so the same `txn_id` may legitimately be processed more than once in a failure scenario. A unique constraint would cause an integrity error on the second write; the index preserves lookup speed without rejecting retries.
+
+**`currency` nullable, `amount` nullable**
+Both fields are optional in the stream payload. Nullable columns reflect reality rather than coercing absent values to empty strings or `0`, which would make "not provided" indistinguishable from "zero" or "unknown currency".
+

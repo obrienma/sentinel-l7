@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\Transaction;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Redis;
 
@@ -32,7 +33,8 @@ class TransactionProcessorService
         $startTime = microtime(true);
         $txnId     = $data['id']       ?? uniqid('txn_');
         $merchant  = $data['merchant'] ?? $data['merchant_name'] ?? '?';
-        $amount    = isset($data['amount']) ? number_format((float) $data['amount'], 2) : '?';
+        $rawAmount = isset($data['amount']) ? (float) $data['amount'] : null;
+        $amount    = $rawAmount !== null ? number_format($rawAmount, 2) : '?';
         $currency  = $data['currency'] ?? '';
 
         try {
@@ -50,7 +52,7 @@ class TransactionProcessorService
                         Cache::increment('sentinel_metrics_threat_count');
                     }
                     $this->recordMetric('cache_hit', microtime(true) - $startTime);
-                    $this->recordTransaction($txnId, $merchant, $amount, $currency, $isThreat, $message, 'cache_hit');
+                    $this->recordTransaction($txnId, $merchant, $amount, $currency, $isThreat, $message, 'cache_hit', $rawAmount);
                 }
 
                 return $this->summary('cache_hit', $isThreat, $message, $startTime);
@@ -117,13 +119,14 @@ class TransactionProcessorService
     }
 
     private function recordTransaction(
-        string $txnId,
-        string $merchant,
-        string $amount,
-        string $currency,
-        bool   $isThreat,
-        string $message,
-        string $source,
+        string  $txnId,
+        string  $merchant,
+        string  $amount,
+        string  $currency,
+        bool    $isThreat,
+        string  $message,
+        string  $source,
+        ?float  $rawAmount = null,
     ): void {
         $entry = json_encode([
             'id'        => $txnId,
@@ -138,5 +141,15 @@ class TransactionProcessorService
 
         Redis::executeRaw(['LPUSH', self::FEED_KEY, $entry]);
         Redis::executeRaw(['LTRIM', self::FEED_KEY, 0, self::FEED_LENGTH - 1]);
+
+        Transaction::create([
+            'txn_id'    => $txnId,
+            'merchant'  => $merchant,
+            'amount'    => $rawAmount,
+            'currency'  => $currency ?: null,
+            'is_threat' => $isThreat,
+            'message'   => $message,
+            'source'    => $source,
+        ]);
     }
 }

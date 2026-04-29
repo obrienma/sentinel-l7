@@ -37,6 +37,7 @@ The compliance/AML domain gave these problems real shape. The input isn't limite
 - [x] Synapse-L4 Python sidecar — FastAPI LLM judge pass + Redis emitter
 - [x] Compliance dashboard — Flags / Events nav pages surfacing `compliance_events`
 - [x] XCLAIM recovery for `synapse:axioms` consumer group — `sentinel:reclaim-axioms` command
+- [x] Transaction history — processed transactions persisted to Postgres `transactions` table
 - [ ] MCP OAuth — `Mcp::oauthRoutes()` for production agent access
 - [ ] CI pipeline — architecture tests + unit suite on every push
 
@@ -320,7 +321,7 @@ php artisan sentinel:reset-metrics
 
 ### What's still ahead
 - ~~**OpenRouterDriver**~~ — done; set `SENTINEL_AI_DRIVER=openrouter` + `OPENROUTER_API_KEY` in `.env` to activate
-- **Transaction history** — persist processed transactions to Postgres for historical search and filtering (currently ephemeral Redis live-feed only)
+- ~~**Transaction history**~~ — done; processed transactions now persisted to Postgres `transactions` table via `Transaction` model
 - **Multi-tenancy** — tenant-scoped stream keys and data isolation; middleware placeholder exists in `routes/web.php`
 - **Compliance report export** — CSV/PDF export of flagged events for a date range
 - **EventHorizon deep-link** — `source_id` correlation from compliance event back to the originating EventHorizon event
