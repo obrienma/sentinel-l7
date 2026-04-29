@@ -79,12 +79,12 @@ it('rejects a duplicate transaction and returns false', function () {
     expect($result)->toBeFalse();
 });
 
-it('returns an empty array when the stream has no messages', function () {
+it('returns an empty messages array when the stream has no messages', function () {
     LRedis::shouldReceive('executeRaw')->andReturn(null);
 
     $service = new TransactionStreamService();
 
-    expect($service->read())->toBe([]);
+    expect($service->read())->toBe(['messages' => [], 'cursor' => '$']);
 });
 
 it('returns decoded messages from the stream', function () {
@@ -95,5 +95,5 @@ it('returns decoded messages from the stream', function () {
 
     $service = new TransactionStreamService();
 
-    expect($service->read())->toBe($fakeMessages);
+    expect($service->read())->toBe(['messages' => $fakeMessages, 'cursor' => '1-0']);
 });

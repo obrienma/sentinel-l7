@@ -21,11 +21,11 @@ it('builds a fingerprint with all fields present', function () {
     ]);
 
     expect($fingerprint)
-        ->toContain('Amount: 12.50 CAD')
+        ->toContain('Amount: small CAD')
         ->toContain('Type: purchase')
         ->toContain('Category: coffee')
         ->toContain('Merchant: Starbucks')
-        ->toContain('Time: 09:14');
+        ->toContain('Time: morning');
 });
 
 it('uses N/A for missing amount and currency', function () {

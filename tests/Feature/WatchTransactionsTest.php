@@ -5,10 +5,15 @@ use App\Services\ThreatAnalysisService;
 use App\Services\ThreatResult;
 use App\Services\TransactionStreamService;
 use App\Services\VectorCacheService;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Redis as LRedis;
 
-uses(Tests\TestCase::class);
+uses(Tests\TestCase::class, RefreshDatabase::class);
+
+// Default Redis stub — prevents real Upstash connections in tests that don't
+// need to inspect the feed payload. Feed tests override with their own expectations.
+beforeEach(fn () => LRedis::shouldReceive('executeRaw')->andReturn(1)->byDefault());
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -47,7 +52,7 @@ function mockStreamWithOneMessage(array $messageOverrides = []): \Mockery\MockIn
         ->andReturnUsing(function () use (&$calls, $messageOverrides) {
             $calls++;
             if ($calls === 1) {
-                return [fakeStreamMessage($messageOverrides)];
+                return ['messages' => [fakeStreamMessage($messageOverrides)], 'cursor' => '1-0'];
             }
             throw new \RuntimeException('__test_stop__');
         });
@@ -399,7 +404,7 @@ it('handles transactions with missing optional fields gracefully', function () {
     $stream = Mockery::mock(TransactionStreamService::class);
     $stream->shouldReceive('read')->andReturnUsing(function () use (&$calls, $minimalMessage) {
         $calls++;
-        if ($calls === 1) return [$minimalMessage];
+        if ($calls === 1) return ['messages' => [$minimalMessage], 'cursor' => '1-0'];
         throw new \RuntimeException('__test_stop__');
     });
 
@@ -629,10 +634,10 @@ it('increments metrics for each transaction independently', function () {
     $stream = Mockery::mock(TransactionStreamService::class);
     $stream->shouldReceive('read')->andReturnUsing(function () use (&$calls) {
         $calls++;
-        if ($calls === 1) return [
+        if ($calls === 1) return ['messages' => [
             fakeStreamMessage(['id' => 'txn-hit-1']),
             fakeStreamMessage(['id' => 'txn-miss-1']),
-        ];
+        ], 'cursor' => '2-0'];
         throw new \RuntimeException('__test_stop__');
     });
 

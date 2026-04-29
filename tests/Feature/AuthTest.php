@@ -2,8 +2,13 @@
 
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Redis;
 
 uses(Tests\TestCase::class, RefreshDatabase::class);
+
+beforeEach(function () {
+    Redis::shouldReceive('executeRaw')->andReturn([]);
+});
 
 // ─── Login page ───────────────────────────────────────────────────────────────
 
