@@ -42,6 +42,16 @@ arch('compliance drivers do not depend on controllers')
     ->expect('App\Services\Compliance')
     ->not->toUse('App\Http\Controllers');
 
+// ─── Domain Logic Isolation ───────────────────────────────────────────────────
+
+arch('sentinel logic does not use Http facade')
+    ->expect('App\Services\Sentinel\Logic')
+    ->not->toUse('Illuminate\Support\Facades\Http');
+
+arch('sentinel logic does not use Redis facade')
+    ->expect('App\Services\Sentinel\Logic')
+    ->not->toUse('Illuminate\Support\Facades\Redis');
+
 // ─── Global ───────────────────────────────────────────────────────────────────
 
 arch('no code uses dd or dump')

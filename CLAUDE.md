@@ -61,7 +61,7 @@ Tier 3 fallback: if embedding or vector search throws, `ThreatAnalysisService` r
 
 ## Domain Logic Isolation
 
-`App\Services\Sentinel\Logic` must not use `Http` or `Redis` facades directly. Enforced by Pest arch tests. All external I/O must go through injected interfaces. If you add to this namespace, run `./vendor/bin/pest --group=architecture` before assuming it's clean.
+`App\Services\Sentinel\Logic` must not use `Http` or `Redis` facades directly. Enforced by arch tests in `tests/ArchTest.php`. All external I/O must go through injected interfaces. If you add to this namespace, run `./vendor/bin/pest tests/ArchTest.php` before assuming it's clean.
 
 ## Frontend Conventions
 
@@ -107,7 +107,7 @@ These are separate from Redis Streams — plain key/value `SET`/`GET`, not strea
 
 ## Testing
 - Never hit real external APIs in tests — mock at the service interface boundary.
-- Architecture tests in `tests/Architecture/` are the most critical; run them after any change to `App\Services\Sentinel\Logic`.
+- Architecture tests live in `tests/ArchTest.php`; run them after any change to `App\Services\Sentinel\Logic` with `./vendor/bin/pest tests/ArchTest.php`.
 - No frontend tests yet; Vitest + React Testing Library is the intended approach when added.
 
 ## Prompts
