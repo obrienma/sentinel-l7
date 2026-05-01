@@ -305,7 +305,7 @@ composer dev-full
 # Start dashboard dev (web + queue + logs + vite + axioms worker)
 composer dev
 
-# Run a batch through the stream manually
+# Run a batch through the stream manually (Ctrl-C / SIGTERM exits cleanly)
 php artisan sentinel:stream --limit=100
 
 # Index policy documents into the vector knowledge base

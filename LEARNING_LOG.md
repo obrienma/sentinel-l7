@@ -1180,3 +1180,49 @@ The `transactions` table indexes `txn_id` but does not apply a `UNIQUE` constrai
 **`currency` nullable, `amount` nullable**
 Both fields are optional in the stream payload. Nullable columns reflect reality rather than coercing absent values to empty strings or `0`, which would make "not provided" indistinguishable from "zero" or "unknown currency".
 
+---
+
+## Phase: PCNTL Signal Trapping — `sentinel:stream` Graceful Shutdown
+*Date: 2026-05-01*
+
+### Summary
+Added PCNTL signal trapping to `StreamTransactions` so the `sentinel:stream` command exits cleanly on `SIGTERM` (Railway/Docker stop) or `SIGINT` (Ctrl-C). `pcntl_async_signals(true)` delivers signals promptly between ticks; both signals set a `$shouldStop` flag checked at the top of the generator loop. The current publish completes before the loop breaks — no mid-transaction interruption. The whole block is guarded by `extension_loaded('pcntl')` for environments without the extension.
+
+---
+
+### Patterns
+
+**`pcntl_async_signals(true)` for prompt signal delivery in loop-based commands**
+PHP's default signal delivery is deferred to safe points (function call boundaries). On a long `usleep()` the signal could sit undelivered until sleep ends. `pcntl_async_signals(true)` switches to async delivery so the handler fires immediately, cutting the worst-case shutdown latency from `--speed` ms to near-zero.
+
+**Q:** Why use `pcntl_async_signals(true)` rather than calling `pcntl_signal_dispatch()` manually inside the loop?
+**A:** `pcntl_signal_dispatch()` requires an explicit call on every iteration — easy to forget, and useless during `usleep()`. Async signals are delivered by the runtime between any two opcodes, including inside the sleep. One setup call covers the entire command lifetime.
+
+---
+
+**Flag-based exit over direct `exit()` in signal handlers**
+The handler sets `$this->shouldStop = true` rather than calling `exit()` directly. This lets the current `$stream->publish()` call complete and gives Laravel a chance to flush output buffers before the process terminates.
+
+**Q:** What is the risk of calling `exit()` directly inside a PCNTL signal handler in a Laravel Artisan command?
+**A:** `exit()` terminates immediately — output buffers may not flush, the command's return value is lost, and any cleanup in `handle()` after the loop is skipped. A flag lets the loop exit naturally, which is safer and more predictable.
+
+---
+
+### Anti-Patterns
+
+**Omitting the `extension_loaded('pcntl')` guard**
+PCNTL is not available on Windows or in some restricted PHP environments. Calling `pcntl_async_signals()` unconditionally would throw a fatal error on those platforms. The guard is two lines and costs nothing.
+
+---
+
+### Challenges
+
+**No challenge was encountered.** PCNTL signal trapping in a Laravel Artisan loop command is well-understood. The only decision was flag-vs-exit in the handler — flag wins for the reasons above.
+
+---
+
+### Decisions
+
+**Check `$shouldStop` before publish, not after**
+Placing the flag check at the top of the loop (before `$stream->publish()`) means a signal received mid-sleep aborts before the next transaction is sent. Placing it after would still publish the transaction before honouring the signal. Either is correct; before-publish feels cleaner for a graceful stop.
+
