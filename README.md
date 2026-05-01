@@ -68,6 +68,8 @@ Events are written to a Redis Stream via `XADD` and consumed by a dedicated work
 
 Before invoking the LLM, the worker performs a sub-50ms vector similarity search against a cache namespace. If similarity exceeds 0.95, the existing result is returned — no model call needed. This cuts LLM costs by 80%+ on repeat or near-repeat patterns.
 
+Cache entries carry a **policy epoch** — an md5 hash of the policy corpus stamped when `sentinel:ingest` runs. On every cache hit, the stored epoch is checked against the current epoch. A mismatch discards the cached verdict and forces re-analysis, ensuring no compliance ruling survives a policy update without being re-examined against the new documents.
+
 On a cache miss, a second namespace containing indexed regulatory policy documents (AML, HIPAA, GDPR) is queried to provide the model with grounded context before it reasons about the transaction.
 
 ### Fault tolerance (XCLAIM recovery)
@@ -308,7 +310,7 @@ composer dev
 # Run a batch through the stream manually (Ctrl-C / SIGTERM exits cleanly)
 php artisan sentinel:stream --limit=100
 
-# Index policy documents into the vector knowledge base
+# Index policy documents into the vector knowledge base (bumps policy epoch, cold-starts cache)
 php artisan sentinel:ingest
 
 # Reset dashboard metrics counters

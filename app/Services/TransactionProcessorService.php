@@ -42,6 +42,19 @@ class TransactionProcessorService
             $vector      = $this->embedding->embed($fingerprint);
             $cached      = $this->vectorCache->search($vector);
 
+            if ($cached !== null) {
+                $cachedEpoch  = $cached['metadata']['policy_epoch'] ?? null;
+                $currentEpoch = Cache::get('sentinel_policy_epoch');
+
+                if ($cachedEpoch !== $currentEpoch) {
+                    \Illuminate\Support\Facades\Log::info('Vector cache stale: policy epoch mismatch — re-analyzing', [
+                        'cached_epoch'  => $cachedEpoch,
+                        'current_epoch' => $currentEpoch,
+                    ]);
+                    $cached = null;
+                }
+            }
+
             if ($cached) {
                 $analysis = $cached['metadata']['analysis'];
                 $isThreat = $analysis['isThreat'];
@@ -72,6 +85,7 @@ class TransactionProcessorService
                     ],
                     'timestamp'    => now()->toIso8601String(),
                     'threat_level' => $result->isThreat ? 'high' : 'low',
+                    'policy_epoch' => Cache::get('sentinel_policy_epoch'),
                 ]
             );
 

@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use App\Services\EmbeddingService;
 use App\Services\VectorCacheService;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 
 class SentinelIngest extends Command
@@ -74,9 +75,24 @@ class SentinelIngest extends Command
             $this->newLine();
         }
 
+        $epoch = $this->computePolicyEpoch($files);
+        Cache::forever('sentinel_policy_epoch', $epoch);
+
         $this->info("Done. {$totalDocs} chunks indexed, {$totalFails} failed.");
+        $this->line("Policy epoch: <fg=cyan>{$epoch}</>");
 
         return $totalFails === 0 ? self::SUCCESS : self::FAILURE;
+    }
+
+    /**
+     * Stable hash of the policy corpus — changes when any file is added, removed, or modified.
+     * Sorted before hashing so file discovery order doesn't affect the result.
+     */
+    private function computePolicyEpoch(array $files): string
+    {
+        $hashes = array_map('md5_file', $files);
+        sort($hashes);
+        return md5(implode(',', $hashes));
     }
 
     /**

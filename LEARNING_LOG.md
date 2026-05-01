@@ -1226,3 +1226,65 @@ PCNTL is not available on Windows or in some restricted PHP environments. Callin
 **Check `$shouldStop` before publish, not after**
 Placing the flag check at the top of the loop (before `$stream->publish()`) means a signal received mid-sleep aborts before the next transaction is sent. Placing it after would still publish the transaction before honouring the signal. Either is correct; before-publish feels cleaner for a graceful stop.
 
+---
+
+## Phase: Policy Epoch — Vector Cache Staleness Invalidation
+*Date: 2026-05-01*
+
+### Summary
+Added a policy epoch tagging mechanism to the vector cache to prevent stale compliance verdicts from surviving a policy corpus update. Every cache upsert now stamps `policy_epoch` — an md5 hash of the policy file corpus — into the vector metadata. On every cache hit, `TransactionProcessorService` checks the stored epoch against `Cache::get('sentinel_policy_epoch')`; a mismatch logs an info message, discards the cached verdict, and forces fresh AI re-analysis against the current policy documents. `sentinel:ingest` computes and stores the epoch after indexing via `Cache::forever`.
+
+Backwards compatible: when no ingest has ever run, both the cached epoch (`null` from missing metadata key) and the current epoch (`null` from empty cache) are equal — existing cache hits are served unchanged. Pre-epoch entries (generated before this change) become stale the moment `sentinel:ingest` first runs, which is the correct behaviour: a verdict generated without policy grounding should be re-evaluated once a policy corpus exists.
+
+---
+
+### Patterns
+
+**Lazy epoch invalidation over eager bulk deletion**
+Rather than scanning the entire vector namespace on ingest and deleting stale entries, the epoch check invalidates entries at read time. The stale entry stays in the vector store but is never served; the fresh analysis upserts a new entry for the same fingerprint vector, overwriting it.
+
+**Q:** Why not delete stale entries from the vector namespace when `sentinel:ingest` bumps the epoch?
+**A:** Upstash Vector has no "delete by metadata filter" operation — you'd need to scan all entries, identify stale ones by metadata, and issue individual delete requests. That's expensive, fragile, and risky (a failed scan leaves inconsistent state). Lazy invalidation at read time costs nothing except an occasional re-analysis, which is precisely what you want when the policy ground has shifted.
+
+---
+
+**`md5_file` + sorted hash list for a stable corpus fingerprint**
+`computePolicyEpoch()` calls `md5_file()` on each policy file, sorts the resulting hashes, then hashes the sorted list. Sorting ensures that glob's file discovery order (which varies by filesystem) doesn't produce a different epoch for the same files. Two identical policy corpora always produce the same epoch regardless of the order in which files are found.
+
+**Q:** Why sort the file hashes before computing the combined hash?
+**A:** Glob returns files in filesystem order, which is not guaranteed to be stable across deployments or OS versions. Without sorting, `['hash_a', 'hash_b']` and `['hash_b', 'hash_a']` produce different epochs for identical files, triggering unnecessary cache invalidation. Sorting makes the epoch deterministic.
+
+---
+
+**`null === null` as the "no ingest ever run" sentinel**
+When no policy corpus has been indexed, `Cache::get('sentinel_policy_epoch')` returns `null`. Pre-epoch cache entries have no `policy_epoch` key in their metadata, so `$cached['metadata']['policy_epoch'] ?? null` also returns `null`. The equality check passes: `null === null`. Cache hits are served, and the system behaves as before this change was introduced.
+
+**Q:** What happens to a pre-epoch cache entry (no `policy_epoch` in metadata) once `sentinel:ingest` has run for the first time?
+**A:** `Cache::get('sentinel_policy_epoch')` now returns a real hash. The pre-epoch entry's `policy_epoch` resolves to `null`. `null !== $hash` — the check fails, the entry is treated as stale, and the transaction is re-analysed and re-upserted with the new epoch. Correct: verdicts generated before a policy corpus existed should be re-examined once policies are available.
+
+---
+
+### Anti-Patterns
+
+**Caching compliance verdicts without a validity boundary**
+A vector cache hit on a compliance verdict is only as trustworthy as the policy documents that informed the original analysis. Without an epoch tag, every cache hit is implicitly a claim that the verdict is still valid under the current regulatory regime. That claim is unverifiable and silently wrong after a policy update. The epoch converts an implicit assumption into an explicit, checked invariant.
+
+---
+
+### Challenges
+
+**No challenge was encountered.** The epoch design was clear before implementation began. The main decision — lazy vs. eager invalidation — was resolved in favour of lazy because Upstash Vector lacks a metadata-filtered bulk delete operation.
+
+---
+
+### Decisions
+
+**`Cache::forever` for the epoch key (no TTL)**
+The policy epoch should never expire on its own — it must persist until `sentinel:ingest` deliberately replaces it. A TTL-based expiry would mean the epoch silently disappears, after which all epochs are `null === null` again, and stale entries would be served without warning. `Cache::forever` removes that failure mode.
+
+**Epoch stamped at the end of a successful ingest run, not the start**
+The epoch is written after all chunks are indexed. If ingest fails mid-run, no epoch update occurs and the cache remains consistent with the previous corpus. Writing at the start would mean a partial ingest producing a new epoch that points to an incomplete corpus.
+
+**Epoch mismatch logs at `info` level, not `warning`**
+An epoch mismatch is expected behaviour whenever `sentinel:ingest` has run since the entry was cached. It's not an error or a sign of a problem — it's the invalidation mechanism working correctly. Logging at `warning` would flood the log with false signals after every ingest. `info` keeps it visible for tracing without implying fault.
+
