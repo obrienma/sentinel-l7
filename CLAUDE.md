@@ -125,7 +125,8 @@ Create decision logs according to https://martinfowler.com/bliki/ArchitectureDec
 - **Multi-tenancy** — tenant-scoped middleware on `routes/web.php` auth group + tenant-prefixed stream keys; placeholder comment exists in routes file
 - **Compliance report export** — CSV/PDF export endpoint for flagged `compliance_events` by date range
 - **EventHorizon deep-link** — cross-system lookup from `compliance_events.source_id` back to the originating EventHorizon event
-- **Silent partial failure alerting** — alert when a domain-filtered RAG query returns zero chunks for N consecutive events; scaffolding is in place via `GeminiDriver`/`OpenRouterDriver` retrieval quality logs
+- **Silent partial failure alerting** — connect `GeminiDriver`/`OpenRouterDriver` quality score and retrieval coverage logs to an operational alert (e.g. `quality_score=0` for N consecutive events, or zero-chunk filtered retrieval persists)
+- **Retrieval coverage monitoring** — log mean similarity score per domain per query; declining scores signal knowledge base drift
 - **Domain activation in Axiom pipeline** — `WatchAxioms` or Synapse-L4 emitter needs to stamp `domain` on each Axiom payload for domain-scoped RAG to activate; see ADR-0018
 
 ## Claude Code Workflow Notes

@@ -1369,3 +1369,74 @@ The MCP tool is an open-ended policy search interface — an AI agent queries it
 **Domain activation is the caller's responsibility, not the driver's**
 `GeminiDriver` and `OpenRouterDriver` do not attempt to infer domain from `status`, `metric_value`, or any other Axiom field. Inference would be fragile and hard to test. The correct place to stamp domain is upstream — either in the Synapse-L4 emitter (which knows what kind of Axiom it's producing) or in `WatchAxioms` if domain can be derived from stream metadata. The driver stays thin and correct; activation is deferred to when the upstream signal is available.
 
+---
+
+## Phase: Output Quality Scoring (Silent Partial Failure Monitoring — Phase 1)
+*Date: 2026-05-02*
+
+### Summary
+Added a 4-signal quality rubric evaluated on every compliance driver response before it is returned. Both `GeminiDriver` and `OpenRouterDriver` now call `logResponseQuality()` after `parseResponse()`, computing a score from: policy citation (`policy_refs` non-empty), risk level resolved (`risk_level` ≠ `'unknown'`), narrative substance (`strlen(narrative)` ≥ 150), and driver confidence (`confidence` ≥ 0.6). The composite `quality_score` (0–4) is logged at `info` level on every call. When `quality_score` ≤ 1, an additional `Log::warning` fires — the operational hook for alerting on behavioral drift.
+
+The return value of `analyze()` is unchanged. The rubric thresholds (150 chars, warning cutoff ≤ 1) are private constants on each driver class, not config values — they are rubric definitions, not deployment-time tunables. The `source_id` and `domain` from the input data are included in every log entry, enabling per-source and per-domain quality trend analysis.
+
+---
+
+### Patterns
+
+**Behavioral observability as a pure side effect**
+The quality check is inserted between `parseResponse()` and `return` in `analyze()`. It reads the result, writes logs, and returns nothing. The calling code and the `ComplianceDriver` interface are untouched. This is the minimal-footprint approach: no new classes, no interface changes, no storage writes. The instrumentation is invisible to callers.
+
+**Q:** Why place quality scoring inside the driver rather than at the call site in `AxiomProcessorService`?
+**A:** The driver knows the response shape and has the context to score it. `AxiomProcessorService` only sees the returned array — it doesn't know whether `risk_level='unknown'` came from a genuinely low-risk event or from a failed parse. Placing scoring in the driver keeps the logic co-located with the production and parsing of the response, where it can distinguish these cases.
+
+---
+
+**Rubric as private constants, not config**
+`NARRATIVE_LENGTH_MIN = 150` and `QUALITY_WARNING_THRESHOLD = 1` are `private const` on each driver class. Config would suggest an operator should tune them per environment, which would make the baseline unstable — a lower threshold in staging and a higher one in production means you're not measuring the same thing across environments. Constants make the rubric a fixed contract: the same measurement everywhere, always.
+
+**Q:** When would you move a threshold from a constant to a config value?
+**A:** When empirical data from the logged baseline shows the constant is wrong for the production distribution, and you need to adjust it per deployment without a code change. At that point you have evidence for the right value, you've earned the config key. Without that evidence, config is premature flexibility.
+
+---
+
+**Composite score over individual boolean alerts**
+Each signal is weak on its own — a short narrative can be genuinely brief; missing policy refs can mean the event is clear-cut. The composite score surfaces systemic problems: a sustained `quality_score=0` on AML events is a much stronger signal than intermittent `has_policy_refs=false`. Logging all four signals individually allows post-hoc correlation: if `has_risk_level` drops while other signals hold, that's a different failure mode than everything dropping at once.
+
+**Q:** Why log all four signals instead of just the composite score?
+**A:** The composite score tells you something is wrong. The individual signals tell you what is wrong. `quality_score=1` with `has_risk_level=true` and everything else false means the driver is resolving risk levels but producing no policy grounding, short narratives, and low confidence — a specific failure pattern with a specific diagnosis. The composite alone would just say "bad."
+
+---
+
+### Anti-Patterns
+
+**Surfacing quality signals only on failure**
+An alert that fires only when `quality_score=0` tells you something broke. An `info` log on every response tells you what "normal" looks like, which is what makes an anomaly detectable. Without the baseline, you cannot distinguish a genuine degradation from a response that was always mediocre. Both log calls (the `info` on every response and the `warning` on low scores) are necessary — one builds the baseline, the other breaks the silence.
+
+**Changing the return value to carry quality metadata**
+An early design option was to add `quality_score` to the returned array. Rejected: it would change the `ComplianceDriver` interface contract, ripple into `AxiomProcessorService` (which stores the result in Postgres), require a migration, and couple the monitoring concern to the data model. Logging keeps monitoring orthogonal to the pipeline. The result shape is a data contract; the log is an observability side channel. They should stay separate.
+
+---
+
+### Challenges
+
+**Mockery cascade from a new `Log::info` call breaking existing tests**
+Adding `logResponseQuality()` introduced a second `Log::info` call on every `analyze()` invocation. Three existing tests used `Log::shouldReceive('info')->once()` — the `->once()` constraint failed because Mockery saw two `info` calls and threw `NoMatchingExpectationException`. The fix was to update the affected tests to `->twice()` (for the fallback test) or add an explicit second `Log::shouldReceive('info')` expectation (for the retrieval logging tests that also needed to distinguish which call was which by message string).
+
+The deeper lesson: any test that constrains `Log` call counts with `->once()` becomes fragile when the method under test gains a new log call. The right pattern for tests that care about a specific log entry is to add a message-matched expectation for that entry, then add a separate unconstrained expectation for any other log calls — rather than using `->once()` as a catch-all count constraint.
+
+**Q:** What is the most common source of Mockery cascade failures when adding logging to existing code?
+**A:** Tests that use `Log::shouldReceive('warning')->once()->withArgs(...)` to assert a specific log entry, but use the `->once()` count to implicitly verify no other warnings fire. When a new code path adds a second warning, the count fails — but the error message points to the wrong place. Fix: separate message-matched expectations for each distinct log call, with explicit count constraints only on the ones you care about.
+
+---
+
+### Decisions
+
+**Warning threshold at ≤ 1, not 0**
+A score of 0 is guaranteed for the fallback response shape (null narrative, unknown risk, empty refs, zero confidence). Alerting at 0 would fire on every parse failure, which is already covered by the existing `'unexpected response shape'` warning. Alerting at ≤ 1 catches responses where only one signal passes — technically valid JSON with a risk level but no policy grounding, no substantive narrative, and low confidence. That is the early degradation pattern worth detecting before it becomes score=0.
+
+**`source_id` and `domain` included in every quality log entry**
+The quality log is only useful for trend analysis if you can group by source and domain. A sustained quality drop on `source_id='sensor-42'` with `domain='aml'` is actionable; a quality drop aggregated across all sources and domains is a fire alarm with no address. The two fields cost nothing to include and make the log entries queryable.
+
+**No storage write for quality scores**
+Quality scores are logged, not persisted to Postgres alongside the `compliance_events` record. Persisting would require a migration, a schema change, and a decision about what to display on the dashboard. Logging defers all of those decisions while still capturing the signal. If the data proves valuable, promoting it to a stored column is a one-migration change with the log as historical evidence for the schema design.
+

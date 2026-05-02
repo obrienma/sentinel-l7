@@ -10,6 +10,10 @@ use Illuminate\Support\Facades\Log;
 
 class OpenRouterDriver implements ComplianceDriver
 {
+    private const NARRATIVE_LENGTH_MIN = 150;
+
+    private const QUALITY_WARNING_THRESHOLD = 1;
+
     public function __construct(
         private readonly EmbeddingService $embedding,
         private readonly VectorCacheService $vectorCache,
@@ -21,8 +25,10 @@ class OpenRouterDriver implements ComplianceDriver
         $policyChunks = $this->fetchPolicyContext($query, $data);
         $prompt = $this->buildPrompt($data, $policyChunks);
         $raw = $this->callOpenRouter($prompt);
+        $result = $this->parseResponse($raw);
+        $this->logResponseQuality($result, $data);
 
-        return $this->parseResponse($raw);
+        return $result;
     }
 
     private function buildQueryText(array $data): string
@@ -115,6 +121,38 @@ class OpenRouterDriver implements ComplianceDriver
         }
 
         return $response->json('choices.0.message.content') ?? '';
+    }
+
+    private function logResponseQuality(array $result, array $data): void
+    {
+        $hasPolicyRefs = ! empty($result['policy_refs']);
+        $hasRiskLevel = ($result['risk_level'] ?? 'unknown') !== 'unknown';
+        $narrativeLength = strlen((string) ($result['narrative'] ?? ''));
+        $aboveLengthMin = $narrativeLength >= self::NARRATIVE_LENGTH_MIN;
+        $confidence = (float) ($result['confidence'] ?? 0.0);
+        $aboveConfidence = $confidence >= 0.6;
+
+        $qualityScore = (int) $hasPolicyRefs
+                      + (int) $hasRiskLevel
+                      + (int) $aboveLengthMin
+                      + (int) $aboveConfidence;
+
+        $context = [
+            'source_id' => $data['source_id'] ?? null,
+            'domain' => $data['domain'] ?? null,
+            'has_policy_refs' => $hasPolicyRefs,
+            'has_risk_level' => $hasRiskLevel,
+            'narrative_length' => $narrativeLength,
+            'above_length_min' => $aboveLengthMin,
+            'confidence' => $confidence,
+            'quality_score' => $qualityScore,
+        ];
+
+        Log::info('OpenRouterDriver: response quality', $context);
+
+        if ($qualityScore <= self::QUALITY_WARNING_THRESHOLD) {
+            Log::warning('OpenRouterDriver: low quality score', $context);
+        }
     }
 
     private function parseResponse(string $raw): array

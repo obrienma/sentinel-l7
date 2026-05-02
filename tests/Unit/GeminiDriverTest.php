@@ -83,7 +83,10 @@ it('returns unknown fallback when response shape is unexpected', function () {
     Log::shouldReceive('warning')
         ->once()
         ->withArgs(fn ($msg) => str_contains($msg, 'unexpected response shape'));
-    Log::shouldReceive('info')->once();
+    Log::shouldReceive('warning')
+        ->once()
+        ->with('GeminiDriver: low quality score', Mockery::type('array'));
+    Log::shouldReceive('info')->twice();
 
     Http::fake(['https://generativelanguage.googleapis.com/*' => Http::response([
         'candidates' => [['content' => ['parts' => [['text' => 'not json']]]]],
@@ -195,6 +198,8 @@ it('logs retrieval info with domain and filter_used true when domain is present'
             $ctx['chunk_count'] === 1 &&
             $ctx['scores'] === [0.88]
         ));
+    Log::shouldReceive('info')->once()->with('GeminiDriver: response quality', Mockery::type('array'));
+    Log::shouldReceive('warning')->once()->with('GeminiDriver: low quality score', Mockery::type('array'));
 
     (new GeminiDriver($embedding, $vectorCache))->analyze(geminiAxiom(['domain' => 'aml']));
 });
@@ -218,6 +223,92 @@ it('logs retrieval info with null domain and filter_used false when domain is ab
             $ctx['filter_used'] === false &&
             $ctx['chunk_count'] === 0
         ));
+    Log::shouldReceive('info')->once()->with('GeminiDriver: response quality', Mockery::type('array'));
+    Log::shouldReceive('warning')->once()->with('GeminiDriver: low quality score', Mockery::type('array'));
+
+    (new GeminiDriver($embedding, $vectorCache))->analyze(geminiAxiom());
+});
+
+// ─── Output quality scoring ───────────────────────────────────────────────────
+
+it('logs quality score 4 and no warning for a high-quality response', function () {
+    $narrative = str_repeat('Regulatory analysis. ', 8); // 168 chars — above 150 min
+
+    Http::fake(['https://generativelanguage.googleapis.com/*' => Http::response(
+        geminiResponse(['narrative' => $narrative, 'risk_level' => 'high', 'policy_refs' => ['AML-1'], 'confidence' => 0.85]),
+        200
+    )]);
+
+    $embedding = Mockery::mock(EmbeddingService::class);
+    $embedding->shouldReceive('embed')->andReturn(array_fill(0, 1536, 0.1));
+    $vectorCache = Mockery::mock(VectorCacheService::class);
+    $vectorCache->shouldReceive('searchNamespace')->andReturn([]);
+
+    Log::shouldReceive('info')->once()->with('GeminiDriver: policy RAG retrieval', Mockery::type('array'));
+    Log::shouldReceive('info')
+        ->once()
+        ->with('GeminiDriver: response quality', Mockery::on(fn ($ctx) =>
+            $ctx['quality_score'] === 4 &&
+            $ctx['has_policy_refs'] === true &&
+            $ctx['has_risk_level'] === true &&
+            $ctx['above_length_min'] === true &&
+            $ctx['confidence'] === 0.85
+        ));
+    Log::shouldReceive('warning')->never();
+
+    (new GeminiDriver($embedding, $vectorCache))->analyze(geminiAxiom());
+});
+
+it('logs quality score 0 and fires a warning when no signals pass', function () {
+    Http::fake(['https://generativelanguage.googleapis.com/*' => Http::response(
+        geminiResponse(['narrative' => 'Low.', 'risk_level' => 'unknown', 'policy_refs' => [], 'confidence' => 0.3]),
+        200
+    )]);
+
+    $embedding = Mockery::mock(EmbeddingService::class);
+    $embedding->shouldReceive('embed')->andReturn(array_fill(0, 1536, 0.1));
+    $vectorCache = Mockery::mock(VectorCacheService::class);
+    $vectorCache->shouldReceive('searchNamespace')->andReturn([]);
+
+    Log::shouldReceive('info')->once()->with('GeminiDriver: policy RAG retrieval', Mockery::type('array'));
+    Log::shouldReceive('info')
+        ->once()
+        ->with('GeminiDriver: response quality', Mockery::on(fn ($ctx) =>
+            $ctx['quality_score'] === 0
+        ));
+    Log::shouldReceive('warning')
+        ->once()
+        ->with('GeminiDriver: low quality score', Mockery::on(fn ($ctx) =>
+            $ctx['quality_score'] === 0
+        ));
+
+    (new GeminiDriver($embedding, $vectorCache))->analyze(geminiAxiom());
+});
+
+it('logs quality score 2 and no warning when exactly two signals pass', function () {
+    $narrative = str_repeat('Regulatory analysis. ', 8); // above 150 — length signal passes
+
+    Http::fake(['https://generativelanguage.googleapis.com/*' => Http::response(
+        geminiResponse(['narrative' => $narrative, 'risk_level' => 'high', 'policy_refs' => [], 'confidence' => 0.3]),
+        200
+    )]);
+
+    $embedding = Mockery::mock(EmbeddingService::class);
+    $embedding->shouldReceive('embed')->andReturn(array_fill(0, 1536, 0.1));
+    $vectorCache = Mockery::mock(VectorCacheService::class);
+    $vectorCache->shouldReceive('searchNamespace')->andReturn([]);
+
+    Log::shouldReceive('info')->once()->with('GeminiDriver: policy RAG retrieval', Mockery::type('array'));
+    Log::shouldReceive('info')
+        ->once()
+        ->with('GeminiDriver: response quality', Mockery::on(fn ($ctx) =>
+            $ctx['quality_score'] === 2 &&
+            $ctx['has_policy_refs'] === false &&
+            $ctx['has_risk_level'] === true &&
+            $ctx['above_length_min'] === true &&
+            $ctx['confidence'] === 0.3
+        ));
+    Log::shouldReceive('warning')->never();
 
     (new GeminiDriver($embedding, $vectorCache))->analyze(geminiAxiom());
 });

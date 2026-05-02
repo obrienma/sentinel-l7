@@ -35,6 +35,7 @@ The compliance/AML domain gave these problems real shape. The input isn't limite
 - [x] `compliance_events` audit trail — Postgres persistence with `source_id` correlation
 - [x] Policy RAG — `sentinel:ingest` chunking pipeline, `policies/` corpus, score-aware query formulation
 - [x] Domain-scoped RAG retrieval — `domain` metadata tag at ingest; server-side filter at query time; retrieval quality logging
+- [x] Output quality scoring — 4-signal rubric on every compliance driver response; `low quality score` warning when score ≤ 1
 - [x] Synapse-L4 Python sidecar — FastAPI LLM judge pass + Redis emitter
 - [x] Compliance dashboard — Flags / Events nav pages surfacing `compliance_events`
 - [x] XCLAIM recovery for `synapse:axioms` consumer group — `sentinel:reclaim-axioms` command
@@ -323,7 +324,8 @@ php artisan sentinel:reset-metrics
 - **Multi-tenancy** — tenant-scoped stream keys and data isolation; middleware placeholder exists in `routes/web.php`
 - **Compliance report export** — CSV/PDF export of flagged events for a date range
 - **EventHorizon deep-link** — `source_id` correlation from compliance event back to the originating EventHorizon event
-- **Silent partial failure alerting** — alert when a domain-filtered RAG query returns zero chunks for N consecutive events (scaffolding is in place via retrieval quality logs)
+- **Silent partial failure alerting** — connect quality score and retrieval coverage logs to an operational alert (e.g. alert when `quality_score=0` for N consecutive events, or zero-chunk filtered retrieval persists)
+- **Retrieval coverage monitoring** — log mean similarity score per domain per query; declining scores signal a knowledge base drifting out of date relative to incoming events
 - **OAuth on the MCP endpoint** — `Mcp::oauthRoutes()` before production agent access
 - **CI pipeline** — architecture tests + unit suite running on every push
 

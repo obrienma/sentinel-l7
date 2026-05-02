@@ -75,7 +75,8 @@ it('strips markdown code fences before parsing JSON', function () {
 
 it('returns unknown fallback when response shape is unexpected', function () {
     Log::shouldReceive('warning')->once()->withArgs(fn ($msg) => str_contains($msg, 'unexpected response shape'));
-    Log::shouldReceive('info')->once();
+    Log::shouldReceive('warning')->once()->with('OpenRouterDriver: low quality score', Mockery::type('array'));
+    Log::shouldReceive('info')->twice();
 
     $payload = ['choices' => [['message' => ['content' => 'not json at all']]]];
 
@@ -187,6 +188,95 @@ it('passes null filter to searchNamespace when domain key is absent', function (
             $ns === 'policies' && $filter === null
         )
         ->andReturn([]);
+
+    (new OpenRouterDriver($embedding, $vectorCache))->analyze(openRouterAxiom());
+});
+
+// ─── Output quality scoring ───────────────────────────────────────────────────
+
+function openRouterResponse(array $body): array
+{
+    return ['choices' => [['message' => ['content' => json_encode($body)]]]];
+}
+
+it('logs quality score 4 and no warning for a high-quality response', function () {
+    $narrative = str_repeat('Regulatory analysis. ', 8); // 168 chars — above 150 min
+
+    Http::fake(['https://openrouter.ai/*' => Http::response(
+        openRouterResponse(['narrative' => $narrative, 'risk_level' => 'high', 'policy_refs' => ['AML-1'], 'confidence' => 0.85]),
+        200
+    )]);
+
+    $embedding = Mockery::mock(EmbeddingService::class);
+    $embedding->shouldReceive('embed')->andReturn(array_fill(0, 1536, 0.1));
+    $vectorCache = Mockery::mock(VectorCacheService::class);
+    $vectorCache->shouldReceive('searchNamespace')->andReturn([]);
+
+    Log::shouldReceive('info')->once()->with('OpenRouterDriver: policy RAG retrieval', Mockery::type('array'));
+    Log::shouldReceive('info')
+        ->once()
+        ->with('OpenRouterDriver: response quality', Mockery::on(fn ($ctx) =>
+            $ctx['quality_score'] === 4 &&
+            $ctx['has_policy_refs'] === true &&
+            $ctx['has_risk_level'] === true &&
+            $ctx['above_length_min'] === true &&
+            $ctx['confidence'] === 0.85
+        ));
+    Log::shouldReceive('warning')->never();
+
+    (new OpenRouterDriver($embedding, $vectorCache))->analyze(openRouterAxiom());
+});
+
+it('logs quality score 0 and fires a warning when no signals pass', function () {
+    Http::fake(['https://openrouter.ai/*' => Http::response(
+        openRouterResponse(['narrative' => 'Low.', 'risk_level' => 'unknown', 'policy_refs' => [], 'confidence' => 0.3]),
+        200
+    )]);
+
+    $embedding = Mockery::mock(EmbeddingService::class);
+    $embedding->shouldReceive('embed')->andReturn(array_fill(0, 1536, 0.1));
+    $vectorCache = Mockery::mock(VectorCacheService::class);
+    $vectorCache->shouldReceive('searchNamespace')->andReturn([]);
+
+    Log::shouldReceive('info')->once()->with('OpenRouterDriver: policy RAG retrieval', Mockery::type('array'));
+    Log::shouldReceive('info')
+        ->once()
+        ->with('OpenRouterDriver: response quality', Mockery::on(fn ($ctx) =>
+            $ctx['quality_score'] === 0
+        ));
+    Log::shouldReceive('warning')
+        ->once()
+        ->with('OpenRouterDriver: low quality score', Mockery::on(fn ($ctx) =>
+            $ctx['quality_score'] === 0
+        ));
+
+    (new OpenRouterDriver($embedding, $vectorCache))->analyze(openRouterAxiom());
+});
+
+it('logs quality score 2 and no warning when exactly two signals pass', function () {
+    $narrative = str_repeat('Regulatory analysis. ', 8); // above 150 — length signal passes
+
+    Http::fake(['https://openrouter.ai/*' => Http::response(
+        openRouterResponse(['narrative' => $narrative, 'risk_level' => 'high', 'policy_refs' => [], 'confidence' => 0.3]),
+        200
+    )]);
+
+    $embedding = Mockery::mock(EmbeddingService::class);
+    $embedding->shouldReceive('embed')->andReturn(array_fill(0, 1536, 0.1));
+    $vectorCache = Mockery::mock(VectorCacheService::class);
+    $vectorCache->shouldReceive('searchNamespace')->andReturn([]);
+
+    Log::shouldReceive('info')->once()->with('OpenRouterDriver: policy RAG retrieval', Mockery::type('array'));
+    Log::shouldReceive('info')
+        ->once()
+        ->with('OpenRouterDriver: response quality', Mockery::on(fn ($ctx) =>
+            $ctx['quality_score'] === 2 &&
+            $ctx['has_policy_refs'] === false &&
+            $ctx['has_risk_level'] === true &&
+            $ctx['above_length_min'] === true &&
+            $ctx['confidence'] === 0.3
+        ));
+    Log::shouldReceive('warning')->never();
 
     (new OpenRouterDriver($embedding, $vectorCache))->analyze(openRouterAxiom());
 });
