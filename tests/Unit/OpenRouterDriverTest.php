@@ -75,6 +75,7 @@ it('strips markdown code fences before parsing JSON', function () {
 
 it('returns unknown fallback when response shape is unexpected', function () {
     Log::shouldReceive('warning')->once()->withArgs(fn ($msg) => str_contains($msg, 'unexpected response shape'));
+    Log::shouldReceive('info')->once();
 
     $payload = ['choices' => [['message' => ['content' => 'not json at all']]]];
 
@@ -144,4 +145,48 @@ it('sends the Authorization header with the configured API key', function () {
     (new OpenRouterDriver($embedding, $vectorCache))->analyze(openRouterAxiom());
 
     Http::assertSent(fn ($req) => $req->hasHeader('Authorization', 'Bearer test-key-123'));
+});
+
+// ─── Domain filtering ─────────────────────────────────────────────────────────
+
+it('passes domain filter to searchNamespace when domain key is present in data', function () {
+    Http::fake(['https://openrouter.ai/*' => Http::response([
+        'choices' => [['message' => ['content' => json_encode([
+            'narrative' => 'AML audit.', 'risk_level' => 'high', 'policy_refs' => [], 'confidence' => 0.9,
+        ])]]],
+    ], 200)]);
+
+    $embedding = Mockery::mock(EmbeddingService::class);
+    $embedding->shouldReceive('embed')->andReturn(array_fill(0, 1536, 0.1));
+
+    $vectorCache = Mockery::mock(VectorCacheService::class);
+    $vectorCache->shouldReceive('searchNamespace')
+        ->once()
+        ->withArgs(fn ($vec, $ns, $threshold, $topK, $filter) =>
+            $ns === 'policies' && $filter === "domain = 'aml'"
+        )
+        ->andReturn([]);
+
+    (new OpenRouterDriver($embedding, $vectorCache))->analyze(openRouterAxiom(['domain' => 'aml']));
+});
+
+it('passes null filter to searchNamespace when domain key is absent', function () {
+    Http::fake(['https://openrouter.ai/*' => Http::response([
+        'choices' => [['message' => ['content' => json_encode([
+            'narrative' => 'OK.', 'risk_level' => 'low', 'policy_refs' => [], 'confidence' => 0.5,
+        ])]]],
+    ], 200)]);
+
+    $embedding = Mockery::mock(EmbeddingService::class);
+    $embedding->shouldReceive('embed')->andReturn(array_fill(0, 1536, 0.1));
+
+    $vectorCache = Mockery::mock(VectorCacheService::class);
+    $vectorCache->shouldReceive('searchNamespace')
+        ->once()
+        ->withArgs(fn ($vec, $ns, $threshold, $topK, $filter) =>
+            $ns === 'policies' && $filter === null
+        )
+        ->andReturn([]);
+
+    (new OpenRouterDriver($embedding, $vectorCache))->analyze(openRouterAxiom());
 });

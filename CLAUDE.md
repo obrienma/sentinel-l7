@@ -38,7 +38,7 @@ Three processes run concurrently in production:
 **Per-transaction pipeline (worker):**
 1. Embed transaction fingerprint → Gemini embedding API → 1536-dim vector
 2. Vector search (Upstash, ns:`default`, threshold ≥ 0.95) → cache hit returns early
-3. Cache miss → Gemini Flash analysis with policy RAG (ns:`policies`, threshold ≥ 0.70)
+3. Cache miss → Gemini Flash analysis with policy RAG (ns:`policies`, threshold ≥ 0.70, filtered by `domain` metadata when present)
 4. Upsert result into vector cache → XACK
 
 Tier 3 fallback: if embedding or vector search throws, `ThreatAnalysisService` runs locally (amount threshold, no AI). XACK always called.
@@ -122,14 +122,11 @@ Never hardcode a prompt only inside a service class without a corresponding `pro
 Create decision logs according to https://martinfowler.com/bliki/ArchitectureDecisionRecord.html
 
 ## TODO
-- **OpenRouterDriver** — implement the stub (`App\Services\Compliance\OpenRouterDriver`) for `SENTINEL_AI_DRIVER=openrouter` provider switching
-- **Transaction history** — persist processed transactions to a `transactions` Postgres table; currently only written to Redis live-feed list (ephemeral)
 - **Multi-tenancy** — tenant-scoped middleware on `routes/web.php` auth group + tenant-prefixed stream keys; placeholder comment exists in routes file
 - **Compliance report export** — CSV/PDF export endpoint for flagged `compliance_events` by date range
 - **EventHorizon deep-link** — cross-system lookup from `compliance_events.source_id` back to the originating EventHorizon event
-
-## Pending ADRs
-- **ADR-0016** (TODO): Synapse-L4 Axiom ingestion — how Sentinel-L7 receives validated Axioms from the Synapse-L4 sidecar. Decisions needed: new Redis stream key (`synapse:axioms`) vs. existing transaction stream; how `anomaly_score` routes to audit narrative generation; `source_id` correlation back to EventHorizon events. Stub at `docs/adr/0016-synapse-l4-axiom-ingestion.md`.
+- **Silent partial failure alerting** — alert when a domain-filtered RAG query returns zero chunks for N consecutive events; scaffolding is in place via `GeminiDriver`/`OpenRouterDriver` retrieval quality logs
+- **Domain activation in Axiom pipeline** — `WatchAxioms` or Synapse-L4 emitter needs to stamp `domain` on each Axiom payload for domain-scoped RAG to activate; see ADR-0018
 
 ## Claude Code Workflow Notes
 
@@ -137,7 +134,7 @@ Create decision logs according to https://martinfowler.com/bliki/ArchitectureDec
 - **Commit after each logical step** — the user commits manually; don't push. Do provide a commit message for the user.
 - **Don't add features beyond what's asked.** No extra error handling, no extra abstractions, no unrequested refactors.
 - **No doc files** unless explicitly requested. Update `CLAUDE.md` Build Status section after each completed step.
-- **After every completed step: update README.md and LEARNING_LOG.md** — this is mandatory, not optional. README: tick any completed status checkboxes, update "What I'd do next" to remove done items, and correct any stale architecture descriptions. LEARNING_LOG: append a new phase entry (see format below). Do both before suggesting a commit message.
+- **After every completed step: update README.md and LEARNING_LOG.md** — this is mandatory, not optional. README: add a new checked item to the Status section (done-only list), add any new forward work to "What's still ahead", and correct any stale architecture descriptions. LEARNING_LOG: append a new phase entry (see format below). Do both before suggesting a commit message.
 - **Maintain `LEARNING_LOG.md`**: After each phase, append new entries for every pattern used, anti-pattern avoided, challenge encountered, or design decision made. Use the established entry format (Pattern / Anti-Pattern / Challenge / Decision sections with **Q:**/**A:** flashcard blocks).
 - **`LEARNING_LOG.md` is referred to as `ll`** in conversation — treat "ll" as shorthand for `LEARNING_LOG.md`.
 - **Challenges are mandatory in every log entry**: Every phase entry must include a `### Challenges` section. If no challenge was encountered, state that explicitly — do not omit the section. Challenges include: unexpected library behaviour, error messages that required diagnosis, gotchas discovered during testing, version-specific quirks, and any moment where the first approach didn't work. Retroactively add challenges to existing entries if a new phase reveals a prior gotcha.

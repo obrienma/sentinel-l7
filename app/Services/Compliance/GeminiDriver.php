@@ -17,39 +17,54 @@ class GeminiDriver implements ComplianceDriver
 
     public function analyze(array $data): array
     {
-        $query        = $this->buildQueryText($data);
-        $policyChunks = $this->fetchPolicyContext($query);
-        $prompt       = $this->buildPrompt($data, $policyChunks);
-        $raw          = $this->callGeminiFlash($prompt);
+        $query = $this->buildQueryText($data);
+        $policyChunks = $this->fetchPolicyContext($query, $data);
+        $prompt = $this->buildPrompt($data, $policyChunks);
+        $raw = $this->callGeminiFlash($prompt);
 
         return $this->parseResponse($raw);
     }
 
     private function buildQueryText(array $data): string
     {
-        $status   = $data['status']        ?? 'unknown';
-        $score    = (float) ($data['anomaly_score'] ?? 0.0);
+        $status = $data['status'] ?? 'unknown';
+        $score = (float) ($data['anomaly_score'] ?? 0.0);
 
-        $severity = match(true) {
+        $severity = match (true) {
             $score >= 0.90 => 'critical severity requiring immediate escalation and reporting',
             $score >= 0.80 => 'high severity requiring compliance review and possible regulatory notification',
             $score >= 0.60 => 'moderate severity requiring monitoring and documentation',
-            default        => 'low severity for audit logging',
+            default => 'low severity for audit logging',
         };
 
-        return "What compliance obligations, reporting requirements, and regulatory thresholds apply "
-             . "to a {$status} anomaly event of {$severity}?";
+        return 'What compliance obligations, reporting requirements, and regulatory thresholds apply '
+             ."to a {$status} anomaly event of {$severity}?";
     }
 
-    private function fetchPolicyContext(string $query): array
+    private function fetchPolicyContext(string $query, array $data = []): array
     {
         try {
+            $domain = isset($data['domain']) && $data['domain'] !== null
+                ? (string) $data['domain']
+                : null;
+            $filter = $domain !== null ? "domain = '{$domain}'" : null;
+
             $vector = $this->embedding->embed($query);
-            return $this->vectorCache->searchNamespace($vector, 'policies', 0.70, 3);
+            $chunks = $this->vectorCache->searchNamespace($vector, 'policies', 0.70, 3, $filter);
+
+            Log::info('GeminiDriver: policy RAG retrieval', [
+                'domain' => $domain,
+                'filter_used' => $filter !== null,
+                'chunk_count' => count($chunks),
+                'scores' => array_column($chunks, 'score'),
+            ]);
+
+            return $chunks;
         } catch (\Throwable $e) {
             Log::warning('GeminiDriver: policy RAG failed, proceeding without context', [
                 'error' => $e->getMessage(),
             ]);
+
             return [];
         }
     }
@@ -59,17 +74,17 @@ class GeminiDriver implements ComplianceDriver
         $policyText = empty($policyChunks)
             ? 'No specific policy context retrieved.'
             : collect($policyChunks)
-                ->map(fn ($c) => '- ' . ($c['metadata']['text'] ?? json_encode($c['metadata'])))
+                ->map(fn ($c) => '- '.($c['metadata']['text'] ?? json_encode($c['metadata'])))
                 ->implode("\n");
 
         return strtr(
             file_get_contents(base_path('prompts/compliance-audit-narrative.txt')),
             [
-                '{status}'         => $data['status']        ?? 'unknown',
-                '{metric_value}'   => $data['metric_value']  ?? 'unknown',
-                '{anomaly_score}'  => $data['anomaly_score'] ?? 'unknown',
-                '{source_id}'      => $data['source_id']     ?? 'unknown',
-                '{emitted_at}'     => $data['emitted_at']    ?? 'unknown',
+                '{status}' => $data['status'] ?? 'unknown',
+                '{metric_value}' => $data['metric_value'] ?? 'unknown',
+                '{anomaly_score}' => $data['anomaly_score'] ?? 'unknown',
+                '{source_id}' => $data['source_id'] ?? 'unknown',
+                '{emitted_at}' => $data['emitted_at'] ?? 'unknown',
                 '{policy_context}' => $policyText,
             ]
         );
@@ -78,11 +93,11 @@ class GeminiDriver implements ComplianceDriver
     private function callGeminiFlash(string $prompt): string
     {
         $apiKey = config('services.gemini.api_key');
-        $url    = config('services.gemini.flash_url');
+        $url = config('services.gemini.flash_url');
 
         $response = Http::timeout(15)
             ->retry(2, 200, throw: false)
-            ->post($url . '?key=' . $apiKey, [
+            ->post($url.'?key='.$apiKey, [
                 'contents' => [
                     ['parts' => [['text' => $prompt]]],
                 ],
@@ -91,12 +106,12 @@ class GeminiDriver implements ComplianceDriver
                 ],
             ]);
 
-        if (!$response->successful()) {
+        if (! $response->successful()) {
             Log::warning('GeminiDriver: Flash API call failed', [
                 'status' => $response->status(),
-                'body'   => $response->body(),
+                'body' => $response->body(),
             ]);
-            throw new \RuntimeException('GeminiDriver: Flash API call failed: ' . $response->body());
+            throw new \RuntimeException('GeminiDriver: Flash API call failed: '.$response->body());
         }
 
         return $response->json('candidates.0.content.parts.0.text') ?? '';
@@ -109,21 +124,22 @@ class GeminiDriver implements ComplianceDriver
 
         $decoded = json_decode(trim($clean), true);
 
-        if (!is_array($decoded) || !isset($decoded['narrative'])) {
+        if (! is_array($decoded) || ! isset($decoded['narrative'])) {
             Log::warning('GeminiDriver: unexpected response shape', ['raw' => $raw]);
+
             return [
-                'narrative'   => null,
-                'risk_level'  => 'unknown',
+                'narrative' => null,
+                'risk_level' => 'unknown',
                 'policy_refs' => [],
-                'confidence'  => 0.0,
+                'confidence' => 0.0,
             ];
         }
 
         return [
-            'narrative'   => (string) ($decoded['narrative']   ?? ''),
-            'risk_level'  => (string) ($decoded['risk_level']  ?? 'unknown'),
-            'policy_refs' => (array)  ($decoded['policy_refs'] ?? []),
-            'confidence'  => (float)  ($decoded['confidence']  ?? 0.0),
+            'narrative' => (string) ($decoded['narrative'] ?? ''),
+            'risk_level' => (string) ($decoded['risk_level'] ?? 'unknown'),
+            'policy_refs' => (array) ($decoded['policy_refs'] ?? []),
+            'confidence' => (float) ($decoded['confidence'] ?? 0.0),
         ];
     }
 }

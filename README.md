@@ -34,12 +34,11 @@ The compliance/AML domain gave these problems real shape. The input isn't limite
 - [x] Synapse-L4 Axiom ingestion — `synapse:axioms` Redis stream + `sentinel:watch-axioms` worker
 - [x] `compliance_events` audit trail — Postgres persistence with `source_id` correlation
 - [x] Policy RAG — `sentinel:ingest` chunking pipeline, `policies/` corpus, score-aware query formulation
+- [x] Domain-scoped RAG retrieval — `domain` metadata tag at ingest; server-side filter at query time; retrieval quality logging
 - [x] Synapse-L4 Python sidecar — FastAPI LLM judge pass + Redis emitter
 - [x] Compliance dashboard — Flags / Events nav pages surfacing `compliance_events`
 - [x] XCLAIM recovery for `synapse:axioms` consumer group — `sentinel:reclaim-axioms` command
 - [x] Transaction history — processed transactions persisted to Postgres `transactions` table
-- [ ] MCP OAuth — `Mcp::oauthRoutes()` for production agent access
-- [ ] CI pipeline — architecture tests + unit suite on every push
 
 ---
 
@@ -70,7 +69,7 @@ Before invoking the LLM, the worker performs a sub-50ms vector similarity search
 
 Cache entries carry a **policy epoch** — an md5 hash of the policy corpus stamped when `sentinel:ingest` runs. On every cache hit, the stored epoch is checked against the current epoch. A mismatch discards the cached verdict and forces re-analysis, ensuring no compliance ruling survives a policy update without being re-examined against the new documents.
 
-On a cache miss, a second namespace containing indexed regulatory policy documents (AML, HIPAA, GDPR) is queried to provide the model with grounded context before it reasons about the transaction.
+On a cache miss, a second namespace containing indexed regulatory policy documents (AML, HIPAA, GDPR) is queried for grounded context. Each policy chunk carries a `domain` metadata tag stamped at ingest time (`aml`, `gdpr`, `hipaa`, …). When a compliance domain is known for the event being analyzed, the query is scoped to that domain via a server-side metadata filter — preventing GDPR chunks from grounding an AML analysis and vice versa. A zero-chunk filtered retrieval is logged explicitly, making silent partial failures visible.
 
 ### Fault tolerance (XCLAIM recovery)
 
@@ -319,14 +318,12 @@ php artisan sentinel:reset-metrics
 
 ---
 
-## 🗺️ What I'd do next
+## 🗺️ What's still ahead
 
-### What's still ahead
-- ~~**OpenRouterDriver**~~ — done; set `SENTINEL_AI_DRIVER=openrouter` + `OPENROUTER_API_KEY` in `.env` to activate
-- ~~**Transaction history**~~ — done; processed transactions now persisted to Postgres `transactions` table via `Transaction` model
 - **Multi-tenancy** — tenant-scoped stream keys and data isolation; middleware placeholder exists in `routes/web.php`
 - **Compliance report export** — CSV/PDF export of flagged events for a date range
 - **EventHorizon deep-link** — `source_id` correlation from compliance event back to the originating EventHorizon event
+- **Silent partial failure alerting** — alert when a domain-filtered RAG query returns zero chunks for N consecutive events (scaffolding is in place via retrieval quality logs)
 - **OAuth on the MCP endpoint** — `Mcp::oauthRoutes()` before production agent access
 - **CI pipeline** — architecture tests + unit suite running on every push
 

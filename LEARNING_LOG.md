@@ -1288,3 +1288,84 @@ The epoch is written after all chunks are indexed. If ingest fails mid-run, no e
 **Epoch mismatch logs at `info` level, not `warning`**
 An epoch mismatch is expected behaviour whenever `sentinel:ingest` has run since the entry was cached. It's not an error or a sign of a problem — it's the invalidation mechanism working correctly. Logging at `warning` would flood the log with false signals after every ingest. `info` keeps it visible for tracing without implying fault.
 
+---
+
+## Phase: Domain-Scoped Policy RAG Retrieval
+*Date: 2026-05-01*
+
+### Summary
+Added domain-level scoping to the policy RAG retrieval step used by `GeminiDriver` and `OpenRouterDriver`. Previously, both drivers queried the Upstash Vector `policies` namespace globally — the top-3 most similar chunks across all indexed policy documents were passed to Gemini as grounding, regardless of which compliance domain applied to the event. A GDPR chunk could outrank AML chunks for an AML event; Gemini would reason faithfully over it and produce a confident but wrong narrative with no runtime signal that the wrong policy was used.
+
+The fix is two-sided: at ingest time, `sentinel:ingest` derives a `domain` tag from the policy filename (`aml-bsa-compliance.md` → `aml`) and stamps it on every chunk's Upstash Vector metadata. At retrieval time, `VectorCacheService::searchNamespace()` accepts an optional `?string $filter` that is sent to Upstash as a server-side metadata predicate (`"domain = 'aml'"`), scoping similarity search to chunks that match. The filter is populated from `$data['domain']` if present; absent domain means no filter and the previous behaviour is preserved exactly.
+
+Retrieval quality is now logged on every call: domain, filter_used, chunk_count, and similarity scores. A chunk_count of zero with filter_used true is an unambiguous signal that the filter matched nothing — the scaffold for future silent partial failure alerting.
+
+---
+
+### Patterns
+
+**Server-side metadata filtering over client-side post-filter**
+The initial temptation is to fetch all chunks from Upstash and filter by `metadata.domain` in PHP. This works but wastes the `topK` budget on irrelevant chunks, increases data transfer, and degrades result quality: if topK=3 and 2 slots are consumed by off-domain chunks, only 1 relevant chunk reaches the model. Server-side filtering resolves before similarity ranking — Upstash computes scores only among chunks that pass the predicate.
+
+**Q:** Why not filter in PHP after retrieval instead of passing a filter to Upstash?
+**A:** Client-side filtering wastes the topK budget. If you ask for 3 chunks and 2 are from the wrong domain, only 1 useful chunk reaches the model. Server-side filtering keeps topK entirely within the target domain, so the model always gets up to 3 on-domain chunks.
+
+---
+
+**Opt-in filtering via optional parameter with null default**
+Adding `?string $filter = null` to `searchNamespace()` is a non-breaking extension. All three existing callers (GeminiDriver, OpenRouterDriver, SearchPolicies MCP tool) pass exactly four positional args; the fifth resolves to `null` and the payload is unchanged. The filter activates only when a caller explicitly passes a value, making adoption incremental rather than forced.
+
+**Q:** How do you add a new behaviour to a method that three different callers depend on without breaking any of them?
+**A:** Add it as an optional parameter with a safe default. `?string $filter = null` with `if ($filter !== null) { $payload['filter'] = $filter; }` is the classic opt-in extension pattern: zero impact on existing callers, fully available to new ones.
+
+---
+
+**Domain derivation from filename as an implicit schema**
+Rather than requiring explicit domain metadata in each policy file (YAML frontmatter, a manifest JSON, etc.), the domain is derived from the filename's first hyphen-delimited segment. This adds zero friction to adding new policy domains — drop a `hipaa-privacy-rule.md` file and re-run `sentinel:ingest`. The convention is documented in ADR-0018.
+
+**Q:** What's the tradeoff between filename-based domain derivation and explicit frontmatter?
+**A:** Filename convention costs nothing to add (no file changes required) and works automatically for new domains. Frontmatter is more explicit and immune to naming drift, but requires parsing logic and changes to every existing file. The filename convention is sufficient while the corpus is small; frontmatter becomes worth the cost once many contributors are adding policy files with inconsistent naming.
+
+---
+
+**Retrieval quality logging as observable failure**
+Every `fetchPolicyContext()` call logs `domain`, `filter_used`, `chunk_count`, and `scores` at `info` level after a successful retrieval. This turns the retrieval step from a black box into an observable signal. `chunk_count=0, filter_used=true` means the filter worked but matched nothing — a policy domain is being analyzed but has no indexed chunks to ground it. Without this log, that failure is completely silent: Gemini gets `'No specific policy context retrieved.'` and writes a generic narrative, with no indication that grounding was expected but absent.
+
+**Q:** What does `chunk_count=0, filter_used=true` tell you that `chunk_count=0, filter_used=false` does not?
+**A:** `filter_used=true, chunk_count=0` means the system *tried* to restrict to a domain and found nothing. This signals a concrete problem: the domain has no indexed policy chunks (either `sentinel:ingest` hasn't been run, or the policy file is missing). `filter_used=false, chunk_count=0` just means no similar chunks existed globally — a similarity problem, not a missing-domain problem. The flag makes the failure mode diagnosable.
+
+---
+
+### Anti-Patterns
+
+**Global RAG retrieval without domain context**
+Querying a multi-domain policy corpus globally and passing whatever the similarity function returns to an LLM is a quiet correctness hazard. The LLM has no way to know that a retrieved chunk is from the wrong domain — it will incorporate it into its reasoning. The only safeguard is keeping the corpus small enough that off-domain chunks are never top-ranked, which is not a scalable constraint. Structured retrieval (metadata filtering) is the correct fix.
+
+**Changing the `ComplianceDriver` interface to pass domain**
+The `analyze(array $data): array` interface is the boundary between the framework and the AI driver implementations. Adding `domain` as a first-class parameter would force a change to the interface and every implementation simultaneously. Since domain is already in the `$data` payload (it's just an optional key), reading it from there keeps the interface stable and makes domain an opt-in enrichment that callers can add incrementally.
+
+---
+
+### Challenges
+
+**Mockery and `Log::shouldReceive` in tests that now emit `Log::info`**
+After adding `Log::info('... policy RAG retrieval', [...])` to `fetchPolicyContext()`, one existing OpenRouterDriverTest failed with a confusing error: Mockery threw a `NoMatchingExpectationException` when `Log::info()` was called without an expectation, and the exception was caught by the driver's `\Throwable` catch block, which then called `Log::warning()` with the Mockery exception message as the error string. The `Log::warning` expectation in the test didn't match, producing a second exception.
+
+The fix was to add `Log::shouldReceive('info')->once()` to the affected test. The lesson: any test that sets up `Log::shouldReceive` expectations for one log method must also declare expectations for every other log method that will fire during the test — or use `Log::spy()` to allow all calls and assert only the ones that matter.
+
+**Q:** What happens if a Mockery Log mock receives a method call with no registered expectation?
+**A:** Mockery throws `NoMatchingExpectationException`. If this happens inside a `try/catch (\Throwable $e)` block in the system under test, the exception is silently caught and re-emitted as a `Log::warning()` call with the Mockery error message. This produces a cascading, confusing failure that looks like a logging assertion error rather than a missing mock expectation.
+
+---
+
+### Decisions
+
+**`SearchPolicies` MCP tool is deliberately not domain-filtered**
+The MCP tool is an open-ended policy search interface — an AI agent queries it with a free-text compliance question and receives the globally most-relevant chunks. Filtering by domain would require the caller to know in advance which domain applies, which defeats the purpose of semantic search for cross-domain queries. The tool remains global; domain scoping is only for the automated analysis pipeline where the domain is known before retrieval.
+
+**Filter string built inline, not via a query builder**
+`"domain = '{$domain}'"` is the full filter expression. The Upstash Vector filter syntax is simple and stable; introducing a builder class or helper function would add abstraction with no benefit. The `$domain` value comes from `$data['domain']` which is controlled by internal callers, not user input — there is no injection risk.
+
+**Domain activation is the caller's responsibility, not the driver's**
+`GeminiDriver` and `OpenRouterDriver` do not attempt to infer domain from `status`, `metric_value`, or any other Axiom field. Inference would be fragile and hard to test. The correct place to stamp domain is upstream — either in the Synapse-L4 emitter (which knows what kind of Axiom it's producing) or in `WatchAxioms` if domain can be derived from stream metadata. The driver stays thin and correct; activation is deferred to when the upstream signal is available.
+

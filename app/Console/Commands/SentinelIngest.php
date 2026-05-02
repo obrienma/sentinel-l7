@@ -22,8 +22,9 @@ class SentinelIngest extends Command
     {
         $path = base_path($this->option('path'));
 
-        if (!is_dir($path)) {
+        if (! is_dir($path)) {
             $this->error("Directory not found: {$path}");
+
             return self::FAILURE;
         }
 
@@ -31,19 +32,21 @@ class SentinelIngest extends Command
 
         if (empty($files)) {
             $this->warn("No .md files found in {$path}");
+
             return self::SUCCESS;
         }
 
-        $chunkSize  = (int) $this->option('chunk-size');
-        $totalDocs  = 0;
+        $chunkSize = (int) $this->option('chunk-size');
+        $totalDocs = 0;
         $totalFails = 0;
 
         foreach ($files as $file) {
             $filename = basename($file, '.md');
-            $this->line("Ingesting: <fg=blue>{$filename}</>");
+            $domain = explode('-', $filename)[0];
+            $this->line("Ingesting: <fg=blue>{$filename}</> (domain: {$domain})");
 
             $chunks = $this->chunk(file_get_contents($file), $chunkSize);
-            $bar    = $this->output->createProgressBar(count($chunks));
+            $bar = $this->output->createProgressBar(count($chunks));
             $bar->start();
 
             foreach ($chunks as $index => $text) {
@@ -52,15 +55,16 @@ class SentinelIngest extends Command
                 try {
                     $vector = $embedding->embed($text);
                     $vectorCache->upsertNamespace($id, $vector, [
-                        'text'   => $text,
+                        'text' => $text,
                         'source' => $filename,
-                        'chunk'  => $index,
+                        'chunk' => $index,
+                        'domain' => $domain,
                     ], self::NAMESPACE);
 
                     $totalDocs++;
                 } catch (\Throwable $e) {
                     Log::warning('sentinel:ingest chunk failed', [
-                        'id'    => $id,
+                        'id' => $id,
                         'error' => $e->getMessage(),
                     ]);
                     $this->newLine();
@@ -92,6 +96,7 @@ class SentinelIngest extends Command
     {
         $hashes = array_map('md5_file', $files);
         sort($hashes);
+
         return md5(implode(',', $hashes));
     }
 
@@ -104,9 +109,9 @@ class SentinelIngest extends Command
     private function chunk(string $text, int $targetWords): array
     {
         $paragraphs = preg_split('/\n{2,}/', trim($text));
-        $chunks     = [];
-        $current    = [];
-        $wordCount  = 0;
+        $chunks = [];
+        $current = [];
+        $wordCount = 0;
 
         foreach ($paragraphs as $paragraph) {
             $paragraph = trim($paragraph);
@@ -114,18 +119,18 @@ class SentinelIngest extends Command
                 continue;
             }
 
-            $words      = str_word_count($paragraph);
+            $words = str_word_count($paragraph);
             $wordCount += $words;
-            $current[]  = $paragraph;
+            $current[] = $paragraph;
 
             if ($wordCount >= $targetWords) {
-                $chunks[]  = implode("\n\n", $current);
-                $current   = [];
+                $chunks[] = implode("\n\n", $current);
+                $current = [];
                 $wordCount = 0;
             }
         }
 
-        if (!empty($current)) {
+        if (! empty($current)) {
             $chunks[] = implode("\n\n", $current);
         }
 

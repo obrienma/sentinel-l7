@@ -318,3 +318,42 @@ it('logs a warning when delete fails', function () {
 
     (new VectorCacheService())->delete('txn_del_fail');
 });
+
+// ─── searchNamespace: filter parameter ───────────────────────────────────────
+
+it('sends filter in searchNamespace payload when filter is provided', function () use ($fakeVector) {
+    Http::fake(['*/namespaces/policies/query' => Http::response(['result' => []], 200)]);
+
+    (new VectorCacheService())->searchNamespace($fakeVector, 'policies', 0.70, 3, "domain = 'aml'");
+
+    Http::assertSent(function ($request) {
+        $body = $request->data();
+        return isset($body['filter']) && $body['filter'] === "domain = 'aml'";
+    });
+});
+
+it('omits filter key from searchNamespace payload when filter is null', function () use ($fakeVector) {
+    Http::fake(['*/namespaces/policies/query' => Http::response(['result' => []], 200)]);
+
+    (new VectorCacheService())->searchNamespace($fakeVector, 'policies', 0.70, 3);
+
+    Http::assertSent(function ($request) {
+        return !array_key_exists('filter', $request->data());
+    });
+});
+
+it('returns only chunks above threshold when filter is applied', function () use ($fakeVector) {
+    Http::fake([
+        '*/namespaces/policies/query' => Http::response([
+            'result' => [
+                ['id' => 'aml_0', 'score' => 0.85, 'metadata' => ['domain' => 'aml', 'text' => 'AML rule']],
+                ['id' => 'aml_1', 'score' => 0.60, 'metadata' => ['domain' => 'aml', 'text' => 'Below threshold']],
+            ],
+        ], 200),
+    ]);
+
+    $results = (new VectorCacheService())->searchNamespace($fakeVector, 'policies', 0.70, 3, "domain = 'aml'");
+
+    expect($results)->toHaveCount(1)
+        ->and($results[0]['id'])->toBe('aml_0');
+});
