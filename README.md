@@ -15,7 +15,7 @@ I built this to get hands-on with a few specific problems:
 - **Fault tolerance in a worker process** — what happens when a worker crashes mid-job?
 - **Clean architecture under Laravel** — keeping domain logic decoupled from infrastructure
 
-The compliance/AML domain gave these problems real shape. The input isn't limited to financial transactions — data can come from anywhere: financial events, medical access logs, SaaS API activity, or raw system telemetry. The [Synapse-L4](https://github.com/obrienma/synapse-l4) sidecar handles the [EventHorizon telemetry](https://github.com/obrienma/EventHorizon) path: it validates raw events through an LLM judge pass and emits typed, scored Axioms into the pipeline. Sentinel-L7 doesn't care about the source — it cares about whether the data exceeds a risk threshold and what the applicable policy says.
+The compliance/AML domain gave these problems real shape. The input isn't limited to financial transactions — data can come from anywhere: financial events, medical access logs, SaaS API activity, or raw system telemetry. The [Synapse-L4](https://github.com/obrienma/synapse-l4) sidecar handles the [EventHorizon telemetry](https://github.com/obrienma/EventHorizon) path: it validates raw events through an LLM judge pass and emits typed, scored Axioms into the pipeline. Sentinel-L7 doesn't care about the source — it cares about whether the data exceeds a risk threshold and what the applicable policy says. That determination is grounded in a corpus of domain-specific policy documents indexed into a vector knowledge base (Upstash Vector, `policies` namespace), retrieved at analysis time by semantic similarity and filtered by domain tag. The AI prompt templates that drive analysis are version-controlled in `prompts/` — each carries a version number, a changelog, and the list of drivers that use it, so prompt drift is visible in the same way as code drift.
 
 📋[User Stories](docs/USER_STORIES.md) — compliance officer, platform engineer, AI agent
 
@@ -36,6 +36,7 @@ The compliance/AML domain gave these problems real shape. The input isn't limite
 - [x] Policy RAG — `sentinel:ingest` chunking pipeline, `policies/` corpus, score-aware query formulation
 - [x] Domain-scoped RAG retrieval — `domain` metadata tag at ingest; server-side filter at query time; retrieval quality logging
 - [x] Output quality scoring — 4-signal rubric on every compliance driver response; `low quality score` warning when score ≤ 1
+- [x] Retrieval coverage logging — `mean_score` and `under_indexed` per RAG query; `Log::warning` fires when a domain filter returns < 2 chunks
 - [x] Synapse-L4 Python sidecar — FastAPI LLM judge pass + Redis emitter
 - [x] Compliance dashboard — Flags / Events nav pages surfacing `compliance_events`
 - [x] XCLAIM recovery for `synapse:axioms` consumer group — `sentinel:reclaim-axioms` command
@@ -324,8 +325,7 @@ php artisan sentinel:reset-metrics
 - **Multi-tenancy** — tenant-scoped stream keys and data isolation; middleware placeholder exists in `routes/web.php`
 - **Compliance report export** — CSV/PDF export of flagged events for a date range
 - **EventHorizon deep-link** — `source_id` correlation from compliance event back to the originating EventHorizon event
-- **Silent partial failure alerting** — connect quality score and retrieval coverage logs to an operational alert (e.g. alert when `quality_score=0` for N consecutive events, or zero-chunk filtered retrieval persists)
-- **Retrieval coverage monitoring** — log mean similarity score per domain per query; declining scores signal a knowledge base drifting out of date relative to incoming events
+- **Silent partial failure alerting** — wire `under_indexed` warnings and `quality_score` logs to an active alert (e.g. N consecutive under-indexed queries on domain X, or `quality_score=0` for N consecutive events)
 - **OAuth on the MCP endpoint** — `Mcp::oauthRoutes()` before production agent access
 - **CI pipeline** — architecture tests + unit suite running on every push
 

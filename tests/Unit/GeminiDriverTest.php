@@ -196,9 +196,18 @@ it('logs retrieval info with domain and filter_used true when domain is present'
             $ctx['domain'] === 'aml' &&
             $ctx['filter_used'] === true &&
             $ctx['chunk_count'] === 1 &&
+            $ctx['mean_score'] === 0.88 &&
+            $ctx['under_indexed'] === true &&
             $ctx['scores'] === [0.88]
         ));
     Log::shouldReceive('info')->once()->with('GeminiDriver: response quality', Mockery::type('array'));
+    Log::shouldReceive('warning')
+        ->once()
+        ->with('GeminiDriver: under-indexed domain', Mockery::on(fn ($ctx) =>
+            $ctx['domain'] === 'aml' &&
+            $ctx['chunk_count'] === 1 &&
+            $ctx['source_id'] === 'sensor-42'
+        ));
     Log::shouldReceive('warning')->once()->with('GeminiDriver: low quality score', Mockery::type('array'));
 
     (new GeminiDriver($embedding, $vectorCache))->analyze(geminiAxiom(['domain' => 'aml']));
@@ -221,7 +230,9 @@ it('logs retrieval info with null domain and filter_used false when domain is ab
         ->with('GeminiDriver: policy RAG retrieval', Mockery::on(fn ($ctx) =>
             $ctx['domain'] === null &&
             $ctx['filter_used'] === false &&
-            $ctx['chunk_count'] === 0
+            $ctx['chunk_count'] === 0 &&
+            $ctx['mean_score'] === null &&
+            $ctx['under_indexed'] === false
         ));
     Log::shouldReceive('info')->once()->with('GeminiDriver: response quality', Mockery::type('array'));
     Log::shouldReceive('warning')->once()->with('GeminiDriver: low quality score', Mockery::type('array'));
@@ -308,6 +319,60 @@ it('logs quality score 2 and no warning when exactly two signals pass', function
             $ctx['above_length_min'] === true &&
             $ctx['confidence'] === 0.3
         ));
+    Log::shouldReceive('warning')->never();
+
+    (new GeminiDriver($embedding, $vectorCache))->analyze(geminiAxiom());
+});
+
+// ─── Retrieval coverage logging ───────────────────────────────────────────────
+
+it('logs mean_score and does not flag under_indexed when domain filter returns 2 or more chunks', function () {
+    Http::fake(['https://generativelanguage.googleapis.com/*' => Http::response(
+        geminiResponse(['narrative' => str_repeat('Regulatory analysis. ', 8), 'risk_level' => 'high', 'policy_refs' => ['P1'], 'confidence' => 0.9]),
+        200
+    )]);
+
+    $embedding = Mockery::mock(EmbeddingService::class);
+    $embedding->shouldReceive('embed')->andReturn(array_fill(0, 1536, 0.1));
+
+    $vectorCache = Mockery::mock(VectorCacheService::class);
+    $vectorCache->shouldReceive('searchNamespace')->andReturn([
+        ['id' => 'p1', 'score' => 0.85, 'metadata' => []],
+        ['id' => 'p2', 'score' => 0.75, 'metadata' => []],
+    ]);
+
+    Log::shouldReceive('info')
+        ->once()
+        ->with('GeminiDriver: policy RAG retrieval', Mockery::on(fn ($ctx) =>
+            $ctx['chunk_count'] === 2 &&
+            $ctx['mean_score'] === 0.80 &&
+            $ctx['under_indexed'] === false
+        ));
+    Log::shouldReceive('info')->once()->with('GeminiDriver: response quality', Mockery::type('array'));
+    Log::shouldReceive('warning')->never();
+
+    (new GeminiDriver($embedding, $vectorCache))->analyze(geminiAxiom(['domain' => 'aml']));
+});
+
+it('logs null mean_score and does not fire under-indexed warning when no domain is set', function () {
+    Http::fake(['https://generativelanguage.googleapis.com/*' => Http::response(
+        geminiResponse(['narrative' => str_repeat('Regulatory analysis. ', 8), 'risk_level' => 'high', 'policy_refs' => ['P1'], 'confidence' => 0.9]),
+        200
+    )]);
+
+    $embedding = Mockery::mock(EmbeddingService::class);
+    $embedding->shouldReceive('embed')->andReturn(array_fill(0, 1536, 0.1));
+
+    $vectorCache = Mockery::mock(VectorCacheService::class);
+    $vectorCache->shouldReceive('searchNamespace')->andReturn([]);
+
+    Log::shouldReceive('info')
+        ->once()
+        ->with('GeminiDriver: policy RAG retrieval', Mockery::on(fn ($ctx) =>
+            $ctx['mean_score'] === null &&
+            $ctx['under_indexed'] === false
+        ));
+    Log::shouldReceive('info')->once()->with('GeminiDriver: response quality', Mockery::type('array'));
     Log::shouldReceive('warning')->never();
 
     (new GeminiDriver($embedding, $vectorCache))->analyze(geminiAxiom());

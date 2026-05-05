@@ -58,12 +58,29 @@ class GeminiDriver implements ComplianceDriver
             $vector = $this->embedding->embed($query);
             $chunks = $this->vectorCache->searchNamespace($vector, 'policies', 0.70, 3, $filter);
 
+            $scores = array_column($chunks, 'score');
+            $meanScore = count($scores) > 0
+                ? round(array_sum($scores) / count($scores), 4)
+                : null;
+            $underIndexed = $domain !== null && count($chunks) < 2;
+
             Log::info('GeminiDriver: policy RAG retrieval', [
                 'domain' => $domain,
                 'filter_used' => $filter !== null,
                 'chunk_count' => count($chunks),
-                'scores' => array_column($chunks, 'score'),
+                'mean_score' => $meanScore,
+                'under_indexed' => $underIndexed,
+                'scores' => $scores,
             ]);
+
+            if ($underIndexed) {
+                Log::warning('GeminiDriver: under-indexed domain', [
+                    'domain' => $domain,
+                    'chunk_count' => count($chunks),
+                    'mean_score' => $meanScore,
+                    'source_id' => $data['source_id'] ?? null,
+                ]);
+            }
 
             return $chunks;
         } catch (\Throwable $e) {

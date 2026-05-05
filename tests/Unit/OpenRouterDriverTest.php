@@ -280,3 +280,91 @@ it('logs quality score 2 and no warning when exactly two signals pass', function
 
     (new OpenRouterDriver($embedding, $vectorCache))->analyze(openRouterAxiom());
 });
+
+// ─── Retrieval coverage logging ───────────────────────────────────────────────
+
+it('OpenRouter: logs mean_score and does not flag under_indexed when domain filter returns 2 or more chunks', function () {
+    Http::fake(['https://openrouter.ai/*' => Http::response(
+        openRouterResponse(['narrative' => str_repeat('Regulatory analysis. ', 8), 'risk_level' => 'high', 'policy_refs' => ['P1'], 'confidence' => 0.9]),
+        200
+    )]);
+
+    $embedding = Mockery::mock(EmbeddingService::class);
+    $embedding->shouldReceive('embed')->andReturn(array_fill(0, 1536, 0.1));
+
+    $vectorCache = Mockery::mock(VectorCacheService::class);
+    $vectorCache->shouldReceive('searchNamespace')->andReturn([
+        ['id' => 'p1', 'score' => 0.85, 'metadata' => []],
+        ['id' => 'p2', 'score' => 0.75, 'metadata' => []],
+    ]);
+
+    Log::shouldReceive('info')
+        ->once()
+        ->with('OpenRouterDriver: policy RAG retrieval', Mockery::on(fn ($ctx) =>
+            $ctx['chunk_count'] === 2 &&
+            $ctx['mean_score'] === 0.80 &&
+            $ctx['under_indexed'] === false
+        ));
+    Log::shouldReceive('info')->once()->with('OpenRouterDriver: response quality', Mockery::type('array'));
+    Log::shouldReceive('warning')->never();
+
+    (new OpenRouterDriver($embedding, $vectorCache))->analyze(openRouterAxiom(['domain' => 'aml']));
+});
+
+it('OpenRouter: fires under-indexed warning when domain is set and fewer than 2 chunks returned', function () {
+    Http::fake(['https://openrouter.ai/*' => Http::response(
+        openRouterResponse(['narrative' => 'AML audit.', 'risk_level' => 'high', 'policy_refs' => [], 'confidence' => 0.5]),
+        200
+    )]);
+
+    $embedding = Mockery::mock(EmbeddingService::class);
+    $embedding->shouldReceive('embed')->andReturn(array_fill(0, 1536, 0.1));
+
+    $vectorCache = Mockery::mock(VectorCacheService::class);
+    $vectorCache->shouldReceive('searchNamespace')->andReturn([
+        ['id' => 'p1', 'score' => 0.72, 'metadata' => []],
+    ]);
+
+    Log::shouldReceive('info')
+        ->once()
+        ->with('OpenRouterDriver: policy RAG retrieval', Mockery::on(fn ($ctx) =>
+            $ctx['chunk_count'] === 1 &&
+            $ctx['mean_score'] === 0.72 &&
+            $ctx['under_indexed'] === true
+        ));
+    Log::shouldReceive('info')->once()->with('OpenRouterDriver: response quality', Mockery::type('array'));
+    Log::shouldReceive('warning')
+        ->once()
+        ->with('OpenRouterDriver: under-indexed domain', Mockery::on(fn ($ctx) =>
+            $ctx['domain'] === 'aml' &&
+            $ctx['chunk_count'] === 1 &&
+            $ctx['source_id'] === 'sensor-42'
+        ));
+    Log::shouldReceive('warning')->once()->with('OpenRouterDriver: low quality score', Mockery::type('array'));
+
+    (new OpenRouterDriver($embedding, $vectorCache))->analyze(openRouterAxiom(['domain' => 'aml']));
+});
+
+it('OpenRouter: logs null mean_score and does not fire under-indexed warning when no domain is set', function () {
+    Http::fake(['https://openrouter.ai/*' => Http::response(
+        openRouterResponse(['narrative' => str_repeat('Regulatory analysis. ', 8), 'risk_level' => 'high', 'policy_refs' => ['P1'], 'confidence' => 0.9]),
+        200
+    )]);
+
+    $embedding = Mockery::mock(EmbeddingService::class);
+    $embedding->shouldReceive('embed')->andReturn(array_fill(0, 1536, 0.1));
+
+    $vectorCache = Mockery::mock(VectorCacheService::class);
+    $vectorCache->shouldReceive('searchNamespace')->andReturn([]);
+
+    Log::shouldReceive('info')
+        ->once()
+        ->with('OpenRouterDriver: policy RAG retrieval', Mockery::on(fn ($ctx) =>
+            $ctx['mean_score'] === null &&
+            $ctx['under_indexed'] === false
+        ));
+    Log::shouldReceive('info')->once()->with('OpenRouterDriver: response quality', Mockery::type('array'));
+    Log::shouldReceive('warning')->never();
+
+    (new OpenRouterDriver($embedding, $vectorCache))->analyze(openRouterAxiom());
+});

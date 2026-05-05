@@ -1440,3 +1440,68 @@ The quality log is only useful for trend analysis if you can group by source and
 **No storage write for quality scores**
 Quality scores are logged, not persisted to Postgres alongside the `compliance_events` record. Persisting would require a migration, a schema change, and a decision about what to display on the dashboard. Logging defers all of those decisions while still capturing the signal. If the data proves valuable, promoting it to a stored column is a one-migration change with the log as historical evidence for the schema design.
 
+---
+
+## Phase: Retrieval Coverage Logging (Silent Partial Failure Monitoring — Phase 2)
+*Date: 2026-05-02*
+
+### Summary
+Extended the policy RAG retrieval step in both `GeminiDriver` and `OpenRouterDriver` with two new per-query signals: `mean_score` (average similarity of returned chunks, `null` when none) and `under_indexed` (bool: domain filter was active and fewer than 2 chunks passed the threshold). When `under_indexed` is true, a `Log::warning('…: under-indexed domain', …)` fires immediately — before the driver sends anything to Gemini — carrying `domain`, `chunk_count`, `mean_score`, and `source_id`.
+
+This completes the input–output diagnostic chain: `mean_score` and `under_indexed` describe the quality of what Gemini was given; the existing `quality_score` describes the quality of what Gemini produced. Together they make it possible to distinguish "Gemini reasoning poorly from good context" from "Gemini reasoning reasonably from impoverished context."
+
+---
+
+### Patterns
+
+**Separate warning for under-indexed domains, not just a flag in the info log**
+`under_indexed = true` in the `Log::info` context is useful for querying. But an operational alert needs a discrete event — not a flag buried in a structured field. The explicit `Log::warning('…: under-indexed domain', …)` is the alertable event. The info log is the queryable baseline. Both exist; they serve different consumers (alert router vs. log aggregator).
+
+**Q:** Why emit a `Log::warning` for under-indexed domains in addition to logging `under_indexed: true` in the info entry?
+**A:** Info logs are for querying and trend analysis. Warnings are the event surface for alert routing. An ops system watching for `under-indexed domain` warnings can page someone or trigger a re-ingest workflow without needing to parse every info log entry. The two entries are for different audiences.
+
+---
+
+**`null` for `mean_score` when no chunks returned, not `0.0`**
+`0.0` would be ambiguous: it could mean "chunks were returned but all scored zero" or "no chunks were returned at all." `null` is the correct sentinel for "no data to average" — it preserves the distinction between an empty retrieval and a retrieval that returned low-scoring chunks. This matters for downstream analysis: a query returning two chunks at `mean_score=0.71` is a very different situation from one returning zero chunks at `mean_score=null`.
+
+**Q:** Why is `mean_score` `null` rather than `0.0` when the retrieval returns no chunks?
+**A:** `0.0` is ambiguous between "no chunks returned" and "chunks returned with score zero." `null` means "no data to compute a mean from." The distinction is load-bearing for trend analysis: `mean_score` dropping toward `0.71` over time signals drift; `mean_score=null` appearing for a domain that previously had chunks signals a corpus deletion or namespace misconfiguration.
+
+---
+
+**Under-indexed threshold at < 2 chunks for domain-filtered queries only**
+The threshold applies only when `$domain !== null` — a domain-scoped query returning 1 chunk means the knowledge base for that domain is genuinely sparse. A global (no-domain) query returning 1 chunk means the query was niche or the corpus is thin across the board, which is a different and lower-urgency signal. Applying the threshold only to domain-filtered queries avoids false positives on valid broad queries while catching the high-stakes case: a HIPAA query getting one weak chunk to ground an AI-generated audit narrative.
+
+**Q:** Why does the under-indexed check only fire when a domain filter is active?
+**A:** Domain filters express a strong intent: "I need context specifically about HIPAA" or "specifically about AML." Getting 1 chunk back means that specific domain corpus is sparse — a high-stakes gap. Without a domain filter, the query is broader and the corpus as a whole may be sufficient even if this query got a single result. The domain filter is the signal that a targeted corpus depth expectation exists.
+
+---
+
+### Anti-Patterns
+
+**Testing under-indexed behavior only through the warning path**
+An early test instinct was to verify the under-indexed warning fires (the negative path) and leave the positive path (2+ chunks, no warning) implicit. Implicit is fragile: if the condition logic is inverted, both paths can silently produce the wrong behavior while tests pass. The test suite explicitly covers: under-indexed fires (1 chunk, domain set), no warning fires (2 chunks, domain set), no warning fires (no domain, 0 chunks). Three distinct states, three explicit assertions.
+
+---
+
+### Challenges
+
+**Existing retrieval logging test broke when under-indexed warning was added**
+The test `'logs retrieval info with domain and filter_used true when domain is present'` set up `domain='aml'` with 1 chunk returned — which, with the new logic, triggers `under_indexed=true` and a `Log::warning`. The existing test only declared `Log::shouldReceive('warning')->once()` for the quality score warning. Mockery treats an undeclared call to the mocked method as unexpected and throws. The fix was to add an explicit `Log::shouldReceive('warning')->once()->with('GeminiDriver: under-indexed domain', ...)` expectation alongside the quality warning.
+
+This is the same pattern from Phase 1: any test that uses `->once()` on a Log method implicitly asserts no other calls of that method fire. Adding a new log call anywhere in the tested path causes cascade failures in every test that assumed a fixed call count.
+
+**Q:** What is the correct strategy for Log mock expectations when a method might be called multiple times with different arguments?
+**A:** Declare one `Log::shouldReceive('warning')->once()->with(...)` per distinct expected call, matching each by message string. Do not rely on a single `->once()` to express "exactly one warning ever fires" — that breaks the moment any other code path in the same invocation emits a different warning. Each expected call gets its own expectation; count constraints apply per expectation, not globally.
+
+---
+
+### Decisions
+
+**`source_id` included in the under-indexed warning, not just `domain` and `chunk_count`**
+`source_id` identifies which specific event triggered the under-indexed query. In a burst scenario — dozens of HIPAA events hitting an under-indexed corpus — the warning log will show the same `domain='hipaa'` on every entry. Without `source_id`, you cannot tell whether it's one source generating all the noise or many sources exposing the same gap. With `source_id`, you can correlate: if only `sensor-42` sources are triggering it, the domain may be fine and the source is the anomaly; if dozens of sources are triggering it, the corpus needs re-ingest.
+
+**Under-indexed defined as < 2 chunks, not 0**
+Zero chunks is already visible — a `chunk_count=0` with `domain` set in the info log is obvious. The threshold at `< 2` catches the more insidious case: 1 chunk at 0.71 similarity gets past the threshold, appears in the prompt as policy context, and the model may cite it confidently. The response quality scorer may even pass it. You end up with a compliant-looking audit narrative grounded on a single marginal chunk. That is the failure mode worth flagging explicitly — not the zero-chunk case that is already visibly bad.
+
