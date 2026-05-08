@@ -138,7 +138,7 @@ graph TB
     end
 
     Web <-->|OIDC Auth| IdP
-    T1 & T2 & T3 -->|Tenant-Scoped XADD| Stream
+    T1 & T2 & T3 -->|XADD| Stream
     SL4 -->|XADD Axioms| AxiomStream
     Stream -.->|XREADGROUP| Worker
     AxiomStream -.->|XREAD| AxiomWorker
@@ -322,7 +322,6 @@ php artisan sentinel:reset-metrics
 
 ## 🗺️ What's still ahead
 
-- **Multi-tenancy** — tenant-scoped stream keys and data isolation; middleware placeholder exists in `routes/web.php`
 - **Compliance report export** — CSV/PDF export of flagged events for a date range
 - **EventHorizon deep-link** — `source_id` correlation from compliance event back to the originating EventHorizon event
 - **Silent partial failure alerting** — wire `under_indexed` warnings and `quality_score` logs to an active alert (e.g. N consecutive under-indexed queries on domain X, or `quality_score=0` for N consecutive events)
