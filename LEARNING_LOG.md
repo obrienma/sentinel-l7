@@ -1505,3 +1505,75 @@ This is the same pattern from Phase 1: any test that uses `->once()` on a Log me
 **Under-indexed defined as < 2 chunks, not 0**
 Zero chunks is already visible — a `chunk_count=0` with `domain` set in the info log is obvious. The threshold at `< 2` catches the more insidious case: 1 chunk at 0.71 similarity gets past the threshold, appears in the prompt as policy context, and the model may cite it confidently. The response quality scorer may even pass it. You end up with a compliant-looking audit narrative grounded on a single marginal chunk. That is the failure mode worth flagging explicitly — not the zero-chunk case that is already visibly bad.
 
+---
+
+## Phase: Idempotent Axiom Persistence (ADR-0021)
+*Date: 2026-05-11*
+
+### Summary
+Fixed a duplicate-row hazard in `AxiomProcessorService` where a worker crash after INSERT but before XACK would cause the reclaimer to re-deliver the same stream message and insert a second `compliance_events` row for the same Axiom. The fix has three layers: application-level `firstOrCreate` keyed on `source_id`; a PostgreSQL partial unique index (`WHERE source_id != 'unknown'`) as defense-in-depth; and a `UniqueConstraintViolationException` catch to handle the concurrent re-delivery race where two worker instances both pass the SELECT phase of `firstOrCreate` and attempt INSERT simultaneously. All three layers are necessary — the first handles the sequential retry case, the second enforces the constraint at the database level, and the third prevents the concurrent race from skipping XACK and creating an infinite retry loop.
+
+Domain stamping (`$domain`) was also threaded through the routing methods and persisted on the event as part of this change.
+
+---
+
+### Patterns
+
+**`firstOrCreate` for idempotent stream message processing**
+When a stream message may be re-delivered (XAUTOCLAIM recovery), the persistence call must be idempotent. `ComplianceEvent::firstOrCreate(['source_id' => $sourceId], $fields)` expresses the intent precisely: "create this row only if it doesn't already exist." The first write wins — subsequent re-deliveries find the existing row and return it without modification. This is the correct semantic for stream consumer persistence: the first successful processing pass produced valid AI results; a degraded retry must not overwrite them.
+
+**Q:** Why use `firstOrCreate` instead of `updateOrCreate` for idempotent stream event persistence?
+**A:** `updateOrCreate` overwrites the existing row on re-delivery. In a stream consumer, the first processing pass produced AI-generated results (narrative, risk level, policy refs). A re-delivery is likely a degraded retry — possibly hitting the sub-threshold path with no AI analysis. Overwriting valid first-pass results with degraded retry data is worse than a duplicate. `firstOrCreate` preserves the first write; the second attempt is a silent no-op.
+
+---
+
+**Partial unique index with `WHERE` clause**
+The `source_id` column uses a PostgreSQL partial unique index: `CREATE UNIQUE INDEX ... WHERE source_id != 'unknown'`. This gives database-level enforcement while explicitly excluding the `'unknown'` sentinel — malformed Axioms with no stable identity must not block each other. A full unique index would prevent inserting two rows with `source_id='unknown'`, which is wrong: those rows are genuinely distinct events that happen to be unidentifiable.
+
+**Q:** What is the concurrent re-delivery race in Redis XREADGROUP and how is it handled?
+**A:** When a worker crashes after INSERT but before XACK, the message stays in the Pending Entry List. The reclaimer uses XAUTOCLAIM to reassign it. If two workers pick up the same message simultaneously (e.g., the original worker recovers while the reclaimer also claims it), both pass `firstOrCreate`'s SELECT and see no existing row, then both attempt INSERT. The second INSERT hits the unique constraint and throws `UniqueConstraintViolationException`. The catch block treats this as a successful no-op and proceeds to XACK — because the first INSERT succeeded, the event is already persisted correctly.
+
+---
+
+**Catching `UniqueConstraintViolationException` as a valid success path**
+A `UniqueConstraintViolationException` in `persist()` means another worker already inserted the row. The event is persisted. The correct response is to proceed to XACK, not to propagate the exception. If the exception propagates uncaught past `process()`, the stream worker skips XACK, the message stays in the PEL, and the reclaimer re-delivers it again — an infinite retry loop for a message that was actually persisted successfully.
+
+**Q:** What happens if a `UniqueConstraintViolationException` is NOT caught in a stream worker's process() method?
+**A:** The exception propagates out of `process()`. The worker skips XACK. The message remains in the PEL. The reclaimer detects it as idle after 60 seconds and re-delivers it. The same race fires again, indefinitely. The catch converts an infinite loop into a clean acknowledgement.
+
+---
+
+**`persist()` method extraction**
+The two persistence paths (known `source_id` → `firstOrCreate`; `'unknown'` → `create`) appeared identically in both `routeToAi()` and `recordSubThreshold()`. Extracting them into a private `persist(string $sourceId, array $fields): void` removed the duplication and gave the `UniqueConstraintViolationException` catch a single, explicit home. Without the extraction, the catch would need to appear in two separate branches, and any future change to persistence logic would require two edits.
+
+---
+
+### Anti-Patterns
+
+**Using `create()` unconditionally in a stream consumer**
+`ComplianceEvent::create($fields)` in a worker that processes XREADGROUP messages is a latent duplicate-row bug. XREADGROUP guarantees at-least-once delivery, not exactly-once. Any crash between INSERT and XACK will re-deliver the message. The only question is whether the duplication will be noticed before it produces corrupt audit data.
+
+---
+
+**Treating `UniqueConstraintViolationException` as an error when it represents a concurrent idempotency collision**
+The natural instinct when a database constraint fires is to surface it as an error. In a stream worker, this produces the infinite retry loop described above. The exception is not a data integrity problem — it is the database enforcing the idempotency guarantee the application put in place. Catching it and continuing is not suppressing an error; it is completing the success path.
+
+---
+
+### Challenges
+
+**`firstOrCreate` is not atomic — the concurrent race still fires after the application-level fix**
+The original plan was: add `firstOrCreate` + partial unique index. During code review, the non-atomicity of `firstOrCreate` was identified: it executes a SELECT followed by a separate INSERT. Under concurrent re-delivery, two workers can both execute the SELECT, both see no existing row, and both proceed to INSERT. The unique index stops the second INSERT and throws `UniqueConstraintViolationException` — an exception that was not in the original plan at all. The application-level `firstOrCreate` handles sequential retries (the common case); the catch handles the concurrent race (the edge case that the SELECT-then-INSERT gap creates). Both are necessary; neither is sufficient alone. This was caught by an independent code reviewer after the first version of the fix was written.
+
+---
+
+### Decisions
+
+**`firstOrCreate` over `updateOrCreate` (first-write-wins)**
+The first successful processing pass produces the canonical result. A retry under XAUTOCLAIM may take a degraded path (sub-threshold, no AI analysis) if the Axiom's score produces different results on re-evaluation. `updateOrCreate` would silently replace a complete AI-generated audit narrative with a degraded sub-threshold row. `firstOrCreate` preserves the first-pass result unconditionally. Tradeoff accepted: if the first pass produced a genuinely bad result, there is no self-correction — a manual intervention or `source_id`-targeted delete would be needed.
+
+---
+
+**`source_id` over stream message ID as the idempotency key**
+The XREADGROUP message ID is a valid unique key for a specific delivery. Using it as the idempotency key would tie the persistence model to the delivery mechanism: if the same Axiom were ever re-emitted to the stream with a new message ID (e.g., Synapse-L4 retrying a failed emit), a new row would be inserted for the same logical event. `source_id` is the identity of the Axiom itself — independent of how many times it arrived on the stream. Keying on `source_id` keeps the persistence model decoupled from the delivery mechanism and correctly handles both XAUTOCLAIM re-delivery (same message ID) and upstream re-emission (new message ID, same logical event).
+

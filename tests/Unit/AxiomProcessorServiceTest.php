@@ -75,7 +75,7 @@ it('persists a ComplianceEvent for every axiom regardless of routing', function 
     ]);
 
     (new AxiomProcessorService($driver))->process($baseAxiom);
-    (new AxiomProcessorService($driver))->process([...$baseAxiom, 'anomaly_score' => 0.1]);
+    (new AxiomProcessorService($driver))->process([...$baseAxiom, 'source_id' => 'sensor-43', 'anomaly_score' => 0.1]);
 
     expect(ComplianceEvent::count())->toBe(2);
 });
@@ -147,6 +147,67 @@ it('logs an error when the driver throws', function () use ($baseAxiom) {
         ->with('AxiomProcessorService: AI analysis failed', Mockery::any());
 
     (new AxiomProcessorService($driver))->process($baseAxiom);
+});
+
+// ─── Idempotency ─────────────────────────────────────────────────────────────
+
+it('does not create a duplicate event when the same source_id is re-delivered (sub-threshold)', function () use ($baseAxiom) {
+    $driver = Mockery::mock(ComplianceDriver::class);
+    $driver->shouldNotReceive('analyze');
+
+    $payload = [...$baseAxiom, 'anomaly_score' => 0.1];
+    (new AxiomProcessorService($driver))->process($payload);
+    (new AxiomProcessorService($driver))->process($payload);
+
+    expect(ComplianceEvent::count())->toBe(1);
+    Mockery::close();
+});
+
+it('does not create a duplicate event when the same source_id is re-delivered (ai-routed)', function () use ($baseAxiom) {
+    $driver = Mockery::mock(ComplianceDriver::class);
+    $driver->shouldReceive('analyze')->twice()->andReturn([
+        'narrative' => 'Audit.', 'risk_level' => 'high', 'policy_refs' => [], 'confidence' => 0.9,
+    ]);
+
+    (new AxiomProcessorService($driver))->process($baseAxiom);
+    (new AxiomProcessorService($driver))->process($baseAxiom);
+
+    expect(ComplianceEvent::count())->toBe(1);
+    Mockery::close();
+});
+
+// ─── Domain stamping ──────────────────────────────────────────────────────────
+
+it('persists domain on the compliance event when present', function () use ($baseAxiom) {
+    $driver = Mockery::mock(ComplianceDriver::class);
+    $driver->shouldNotReceive('analyze');
+
+    (new AxiomProcessorService($driver))->process([...$baseAxiom, 'anomaly_score' => 0.1, 'domain' => 'aml']);
+
+    expect(ComplianceEvent::first()->domain)->toBe('aml');
+    Mockery::close();
+});
+
+it('persists null domain when absent', function () use ($baseAxiom) {
+    $driver = Mockery::mock(ComplianceDriver::class);
+    $driver->shouldNotReceive('analyze');
+
+    (new AxiomProcessorService($driver))->process([...$baseAxiom, 'anomaly_score' => 0.1]);
+
+    expect(ComplianceEvent::first()->domain)->toBeNull();
+    Mockery::close();
+});
+
+it('returns domain in the outcome array', function () use ($baseAxiom) {
+    $driver = Mockery::mock(ComplianceDriver::class);
+    $driver->shouldReceive('analyze')->andReturn([
+        'narrative' => 'Audit.', 'risk_level' => 'high', 'policy_refs' => [], 'confidence' => 0.9,
+    ]);
+
+    $result = (new AxiomProcessorService($driver))->process([...$baseAxiom, 'domain' => 'aml']);
+
+    expect($result['domain'])->toBe('aml');
+    Mockery::close();
 });
 
 // ─── Return shape ─────────────────────────────────────────────────────────────

@@ -8,6 +8,7 @@ class ComplianceEvent extends Model
 {
     protected $fillable = [
         'source_id',
+        'domain',
         'status',
         'metric_value',
         'anomaly_score',
@@ -18,9 +19,9 @@ class ComplianceEvent extends Model
     ];
 
     protected $casts = [
-        'metric_value'  => 'float',
+        'metric_value' => 'float',
         'anomaly_score' => 'float',
-        'routed_to_ai'  => 'boolean',
-        'emitted_at'    => 'datetime',
+        'routed_to_ai' => 'boolean',
+        'emitted_at' => 'datetime',
     ];
 }

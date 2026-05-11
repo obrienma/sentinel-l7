@@ -41,6 +41,7 @@ The compliance/AML domain gave these problems real shape. The input isn't limite
 - [x] Compliance dashboard — Flags / Events nav pages surfacing `compliance_events`
 - [x] XCLAIM recovery for `synapse:axioms` consumer group — `sentinel:reclaim-axioms` command
 - [x] Transaction history — processed transactions persisted to Postgres `transactions` table
+- [x] Idempotent Axiom persistence — `firstOrCreate` + partial unique index on `source_id` + `UniqueConstraintViolationException` catch; re-delivered stream messages never produce duplicate `compliance_events` rows
 
 ---
 
@@ -82,6 +83,8 @@ A separate reclaimer process monitors the stream's Pending Entry List. If a work
 Validated Axioms from the Synapse-L4 sidecar arrive on a dedicated `synapse:axioms` Redis stream. A separate worker (`sentinel:watch-axioms`) consumes them independently of the transaction pipeline using `XREADGROUP` — messages sit in the Pending Entry List until explicitly `XACK`'d after successful processing. Every Axiom is persisted to Postgres (`compliance_events`) regardless of score — no silent drops. When `anomaly_score > 0.8`, the worker fetches relevant policy context from the `policies` vector namespace and sends the Axiom to Gemini Flash for an AI-generated audit narrative. The compliance dashboard surfaces these events with narratives, risk levels, and `source_id` correlation back to EventHorizon.
 
 A dedicated reclaimer (`sentinel:reclaim-axioms`) polls the PEL every 30 seconds and uses `XAUTOCLAIM` to recover any Axiom that has been idle for over 60 seconds — zombie messages from a crashed worker are automatically reprocessed.
+
+Persistence is idempotent: `compliance_events` carries a partial unique index on `source_id` (excluding the `'unknown'` sentinel for malformed Axioms), and the worker uses `firstOrCreate` keyed on `source_id`. If two workers race on the same re-delivered message and both attempt INSERT simultaneously, the second hits the unique constraint; the worker catches `UniqueConstraintViolationException` and treats it as a successful no-op before calling `XACK`. This guarantees exactly-once persistence even under `XAUTOCLAIM` recovery.
 
 ### AI driver abstraction (Service Manager pattern)
 
@@ -205,9 +208,15 @@ sequenceDiagram
         V-->>AW: Policy Chunks
         AW->>G: Analyze Axiom + Policy Context
         G-->>AW: Audit Narrative + Risk Level
-        AW->>DB: INSERT compliance_events (routed_to_ai=true)
+        AW->>DB: firstOrCreate compliance_events (routed_to_ai=true)
     else score ≤ 0.8
-        AW->>DB: INSERT compliance_events (routed_to_ai=false)
+        AW->>DB: firstOrCreate compliance_events (routed_to_ai=false)
+    end
+
+    alt source_id not yet seen
+        DB-->>AW: row created
+    else re-delivery (same source_id)
+        DB-->>AW: existing row returned — no duplicate
     end
 
     AW->>AS: XACK (remove from PEL)

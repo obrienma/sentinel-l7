@@ -21,30 +21,37 @@ class AxiomProcessorService
      * TODO: broadcast processed Axiom to dashboard feed (Redis list) once
      *       Flags/Compliance nav pages are built.
      *
-     * @param  array $data  Decoded Axiom: {status, metric_value, anomaly_score, source_id, emitted_at}
-     * @return array{source_id: string, routed_to_ai: bool, risk_level: string, narrative: string|null, elapsed_ms: float}
+     * @param  array  $data  Decoded Axiom: {status, metric_value, anomaly_score, source_id, emitted_at, domain?}
+     * @return array{source_id: string, routed_to_ai: bool, risk_level: string, narrative: string|null, domain: string|null, elapsed_ms: float}
      */
     public function process(array $data): array
     {
-        $start     = microtime(true);
+        $start = microtime(true);
         $threshold = (float) config('sentinel.axiom_threshold', 0.8);
-        $score     = (float) ($data['anomaly_score'] ?? 0.0);
-        $sourceId  = $data['source_id'] ?? 'unknown';
+        $score = (float) ($data['anomaly_score'] ?? 0.0);
+        $sourceId = $data['source_id'] ?? 'unknown';
+        $domain = $data['domain'] ?? null;
 
-        if ($score > $threshold) {
-            return $this->routeToAi($data, $sourceId, $start);
+        if ($sourceId === 'unknown') {
+            Log::warning('AxiomProcessorService: Axiom received without source_id', [
+                'anomaly_score' => $score,
+            ]);
         }
 
-        return $this->recordSubThreshold($data, $sourceId, $start);
+        if ($score > $threshold) {
+            return $this->routeToAi($data, $sourceId, $domain, $start);
+        }
+
+        return $this->recordSubThreshold($data, $sourceId, $domain, $start);
     }
 
-    private function routeToAi(array $data, string $sourceId, float $start): array
+    private function routeToAi(array $data, string $sourceId, ?string $domain, float $start): array
     {
         $result = [
-            'narrative'   => null,
-            'risk_level'  => 'unknown',
+            'narrative' => null,
+            'risk_level' => 'unknown',
             'policy_refs' => [],
-            'confidence'  => 0.0,
+            'confidence' => 0.0,
         ];
 
         try {
@@ -52,49 +59,67 @@ class AxiomProcessorService
         } catch (\Throwable $e) {
             Log::error('AxiomProcessorService: AI analysis failed', [
                 'source_id' => $sourceId,
-                'error'     => $e->getMessage(),
+                'error' => $e->getMessage(),
             ]);
         }
 
-        ComplianceEvent::create([
-            'source_id'       => $sourceId,
-            'status'          => $data['status']        ?? null,
-            'metric_value'    => $data['metric_value']  ?? null,
-            'anomaly_score'   => $data['anomaly_score'] ?? null,
-            'emitted_at'      => $data['emitted_at']    ?? null,
-            'routed_to_ai'    => true,
+        $this->persist($sourceId, [
+            'domain' => $domain,
+            'status' => $data['status'] ?? null,
+            'metric_value' => $data['metric_value'] ?? null,
+            'anomaly_score' => $data['anomaly_score'] ?? null,
+            'emitted_at' => $data['emitted_at'] ?? null,
+            'routed_to_ai' => true,
             'audit_narrative' => $result['narrative'],
-            'driver_used'     => config('sentinel.ai_driver'),
+            'driver_used' => config('sentinel.ai_driver'),
         ]);
 
         return [
-            'source_id'    => $sourceId,
+            'source_id' => $sourceId,
             'routed_to_ai' => true,
-            'risk_level'   => $result['risk_level'],
-            'narrative'    => $result['narrative'],
-            'elapsed_ms'   => round((microtime(true) - $start) * 1000, 2),
+            'risk_level' => $result['risk_level'],
+            'narrative' => $result['narrative'],
+            'domain' => $domain,
+            'elapsed_ms' => round((microtime(true) - $start) * 1000, 2),
         ];
     }
 
-    private function recordSubThreshold(array $data, string $sourceId, float $start): array
+    private function recordSubThreshold(array $data, string $sourceId, ?string $domain, float $start): array
     {
-        ComplianceEvent::create([
-            'source_id'       => $sourceId,
-            'status'          => $data['status']        ?? null,
-            'metric_value'    => $data['metric_value']  ?? null,
-            'anomaly_score'   => $data['anomaly_score'] ?? null,
-            'emitted_at'      => $data['emitted_at']    ?? null,
-            'routed_to_ai'    => false,
+        $this->persist($sourceId, [
+            'domain' => $domain,
+            'status' => $data['status'] ?? null,
+            'metric_value' => $data['metric_value'] ?? null,
+            'anomaly_score' => $data['anomaly_score'] ?? null,
+            'emitted_at' => $data['emitted_at'] ?? null,
+            'routed_to_ai' => false,
             'audit_narrative' => null,
-            'driver_used'     => null,
+            'driver_used' => null,
         ]);
 
         return [
-            'source_id'    => $sourceId,
+            'source_id' => $sourceId,
             'routed_to_ai' => false,
-            'risk_level'   => 'low',
-            'narrative'    => null,
-            'elapsed_ms'   => round((microtime(true) - $start) * 1000, 2),
+            'risk_level' => 'low',
+            'narrative' => null,
+            'domain' => $domain,
+            'elapsed_ms' => round((microtime(true) - $start) * 1000, 2),
         ];
+    }
+
+    private function persist(string $sourceId, array $fields): void
+    {
+        try {
+            if ($sourceId !== 'unknown') {
+                ComplianceEvent::firstOrCreate(['source_id' => $sourceId], $fields);
+            } else {
+                ComplianceEvent::create(['source_id' => $sourceId, ...$fields]);
+            }
+        } catch (\Illuminate\Database\UniqueConstraintViolationException) {
+            // Concurrent re-delivery: another worker already persisted this source_id.
+            Log::info('AxiomProcessorService: duplicate source_id suppressed by DB constraint', [
+                'source_id' => $sourceId,
+            ]);
+        }
     }
 }
