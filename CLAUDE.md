@@ -128,17 +128,23 @@ Create decision logs according to https://martinfowler.com/bliki/ArchitectureDec
 - **Silent partial failure alerting** — connect `GeminiDriver`/`OpenRouterDriver` quality score and retrieval coverage logs to an operational alert (e.g. `quality_score=0` for N consecutive events, or zero-chunk filtered retrieval persists)
 - **Retrieval coverage monitoring** — log mean similarity score per domain per query; declining scores signal knowledge base drift
 - **Domain activation in Axiom pipeline** — `WatchAxioms` or Synapse-L4 emitter needs to stamp `domain` on each Axiom payload for domain-scoped RAG to activate; see ADR-0018
+- **Backpressure step 1** — add `COUNT 1` to `TransactionStreamService::read()` XREAD + XLEN guard in `StreamTransactions` (skip XADD when stream depth > 800); stopgap, no architecture change needed
+- **Backpressure step 2** — migrate `WatchTransactions` from `XREAD` to `XREADGROUP`/`XACK`; extend reclaimer to cover both streams; unlocks XPENDING lag measurement
+- **Backpressure step 3** — worker writes `XPENDING` count to `sentinel:consumer_lag` Redis key after each batch; producer reads it and applies graduated publish delay (depends on step 2)
 
 ## Claude Code Workflow Notes
 
 - **Work one step at a time** and pause for confirmation before moving to the next build step.
 - **Commit after each logical step** — the user commits manually; don't push. Do provide a commit message for the user.
-- **Don't add features beyond what's asked.** No extra error handling, no extra abstractions, no unrequested refactors.
-- **No doc files** unless explicitly requested. Update `CLAUDE.md` Build Status section after each completed step.
+- **Don't add features beyond what's asked.** No extra error handling, no extra abstractions, no unrequested refactors. Write todos instead. Note these in suggested commit msg.
+
+- **Doc files** Using the write-docs skill. Update `CLAUDE.md` Build Status section after each completed step.
 - **After every completed step: update README.md and LEARNING_LOG.md** — this is mandatory, not optional. README: add a new checked item to the Status section (done-only list), add any new forward work to "What's still ahead", and correct any stale architecture descriptions. LEARNING_LOG: append a new phase entry (see format below). Do both before suggesting a commit message.
 - **Maintain `LEARNING_LOG.md`**: After each phase, append new entries for every pattern used, anti-pattern avoided, challenge encountered, or design decision made. Use the established entry format (Pattern / Anti-Pattern / Challenge / Decision sections with **Q:**/**A:** flashcard blocks).
 - **`LEARNING_LOG.md` is referred to as `ll`** in conversation — treat "ll" as shorthand for `LEARNING_LOG.md`.
 - **Challenges are mandatory in every log entry**: Every phase entry must include a `### Challenges` section. If no challenge was encountered, state that explicitly — do not omit the section. Challenges include: unexpected library behaviour, error messages that required diagnosis, gotchas discovered during testing, version-specific quirks, and any moment where the first approach didn't work. Retroactively add challenges to existing entries if a new phase reveals a prior gotcha.
+
+
 - TypeScript strict mode means all nullable paths must be handled — don't use `!` non-null assertions unless provably safe.
 - ESM (`"type": "module"`) — all imports need explicit `.js` extensions when importing local files (TypeScript resolves `.ts` → `.js` at runtime with NodeNext).
 - Update the Build Status section in this file after each completed step.

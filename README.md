@@ -336,4 +336,7 @@ php artisan sentinel:reset-metrics
 - **Silent partial failure alerting** — wire `under_indexed` warnings and `quality_score` logs to an active alert (e.g. N consecutive under-indexed queries on domain X, or `quality_score=0` for N consecutive events)
 - **OAuth on the MCP endpoint** — `Mcp::oauthRoutes()` before production agent access
 - **CI pipeline** — architecture tests + unit suite running on every push
+- **Backpressure (step 1)** — add `COUNT 1` to transaction `XREAD` + `XLEN` producer guard in `StreamTransactions` to prevent burst floods
+- **Backpressure (step 2)** — migrate `WatchTransactions` to `XREADGROUP`/`XACK` for crash-safe processing and `XPENDING`-based lag measurement; extend reclaimer to cover both streams
+- **Backpressure (step 3)** — explicit consumer lag signal: worker writes `XPENDING` count to `sentinel:consumer_lag`; producer applies graduated delay when lag exceeds threshold
 
