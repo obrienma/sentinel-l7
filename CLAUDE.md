@@ -131,6 +131,7 @@ Create decision logs according to https://martinfowler.com/bliki/ArchitectureDec
 - **Backpressure step 1** — add `COUNT 1` to `TransactionStreamService::read()` XREAD + XLEN guard in `StreamTransactions` (skip XADD when stream depth > 800); stopgap, no architecture change needed
 - **Backpressure step 2** — migrate `WatchTransactions` from `XREAD` to `XREADGROUP`/`XACK`; extend reclaimer to cover both streams; unlocks XPENDING lag measurement
 - **Backpressure step 3** — worker writes `XPENDING` count to `sentinel:consumer_lag` Redis key after each batch; producer reads it and applies graduated publish delay (depends on step 2)
+- **End-to-end idempotency audit** — (1) audit that EventHorizon event ID survives as `source_id` through Synapse-L4 onto the Axiom; (2) add early-exit `EXISTS` check in `AxiomProcessorService` before AI call so duplicate `source_id`s skip Gemini entirely. DB-layer dedup already exists at line 114 but fires too late.
 
 ## Claude Code Workflow Notes
 

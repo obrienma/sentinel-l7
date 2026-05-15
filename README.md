@@ -339,4 +339,5 @@ php artisan sentinel:reset-metrics
 - **Backpressure (step 1)** — add `COUNT 1` to transaction `XREAD` + `XLEN` producer guard in `StreamTransactions` to prevent burst floods
 - **Backpressure (step 2)** — migrate `WatchTransactions` to `XREADGROUP`/`XACK` for crash-safe processing and `XPENDING`-based lag measurement; extend reclaimer to cover both streams
 - **Backpressure (step 3)** — explicit consumer lag signal: worker writes `XPENDING` count to `sentinel:consumer_lag`; producer applies graduated delay when lag exceeds threshold
+- **End-to-end idempotency audit** — verify EventHorizon event ID flows through Synapse-L4 as `source_id` on the Axiom; add early-exit dedup in `AxiomProcessorService` before the AI call to avoid redundant Gemini spend on duplicate stream entries
 
