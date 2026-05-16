@@ -74,9 +74,11 @@ Cache entries carry a **policy epoch** — an md5 hash of the policy corpus stam
 
 On a cache miss, a second namespace containing indexed regulatory policy documents (AML, HIPAA, GDPR) is queried for grounded context. Each policy chunk carries a `domain` metadata tag stamped at ingest time (`aml`, `gdpr`, `hipaa`, …). When a compliance domain is known for the event being analyzed, the query is scoped to that domain via a server-side metadata filter — preventing GDPR chunks from grounding an AML analysis and vice versa. A zero-chunk filtered retrieval is logged explicitly, making silent partial failures visible.
 
-### Fault tolerance (XCLAIM recovery)
+### Fault tolerance (XCLAIM recovery → XAUTOCLAIM self-healing pool)
 
 A separate reclaimer process monitors the stream's Pending Entry List. If a worker crashes mid-processing, the reclaimer detects the idle message and re-assigns it via `XCLAIM`. Zero message loss.
+
+**Proposed (ADR-0022):** Replace the dedicated reclaimer with an `XAUTOCLAIM` pass embedded at the top of each worker's read loop. Recovery becomes distributed — any running worker claims orphaned messages as part of its normal cycle, eliminating the reclaimer as a separate process and single point of recovery failure.
 
 ### Axiom ingestion (Synapse-L4 → Postgres audit trail)
 
@@ -337,7 +339,7 @@ php artisan sentinel:reset-metrics
 - **OAuth on the MCP endpoint** — `Mcp::oauthRoutes()` before production agent access
 - **CI pipeline** — architecture tests + unit suite running on every push
 - **Backpressure (step 1)** — add `COUNT 1` to transaction `XREAD` + `XLEN` producer guard in `StreamTransactions` to prevent burst floods
-- **Backpressure (step 2)** — migrate `WatchTransactions` to `XREADGROUP`/`XACK` for crash-safe processing and `XPENDING`-based lag measurement; extend reclaimer to cover both streams
+- **Backpressure (step 2)** — migrate `WatchTransactions` to `XREADGROUP`/`XACK`; embed `XAUTOCLAIM` in both worker loops and remove the dedicated reclaimer daemon (ADR-0022)
 - **Backpressure (step 3)** — explicit consumer lag signal: worker writes `XPENDING` count to `sentinel:consumer_lag`; producer applies graduated delay when lag exceeds threshold
 - **End-to-end idempotency audit** — verify EventHorizon event ID flows through Synapse-L4 as `source_id` on the Axiom; add early-exit dedup in `AxiomProcessorService` before the AI call to avoid redundant Gemini spend on duplicate stream entries
 

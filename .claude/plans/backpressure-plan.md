@@ -4,6 +4,8 @@
 
 **Why this matters:** The stream today has a MAXLEN trim — that's lossy, not backpressure. A burst of transactions that outpaces the AI pipeline silently drops the oldest messages with no signal to the producer and no record of what was lost. The transaction stream also uses plain `XREAD` (no consumer group), so a mid-flight worker crash drops in-progress messages permanently. This plan closes both gaps in three steps.
 
+**See also:** ADR-0022 — the XREADGROUP migration in step 2 enables the XAUTOCLAIM self-healing worker pool described there. That ADR supersedes the reclaimer extension approach originally described in step 2.
+
 **Ground rules:**
 - Steps must be done in order — each step is a prerequisite for the next.
 - No new infrastructure. Redis already has everything needed.
@@ -35,33 +37,44 @@ No architecture change. The risk of a burst flood is real today; this removes it
 
 ---
 
-## Step 2 — Migrate WatchTransactions to XREADGROUP
+## Step 2 — Migrate WatchTransactions to XREADGROUP + XAUTOCLAIM recovery
 
-**Estimate:** 3–5 hours  
+**Estimate:** 4–6 hours  
 **GitHub issue:** backpressure: migrate WatchTransactions to XREADGROUP (consumer group)  
-**Depends on:** Step 1 (stream should be well-behaved before adding PEL machinery)
+**Depends on:** Step 1 (stream should be well-behaved before adding PEL machinery)  
+**See:** ADR-0022 — recovery strategy changed from dedicated reclaimer to XAUTOCLAIM embedded in each worker
 
 ### What to change
 
-- `TransactionStreamService` — replace `XREAD BLOCK 0` with `XREADGROUP GROUP sentinel-consumers worker-1 COUNT 1 BLOCK 0 STREAMS sentinel:transactions >`.
+- `TransactionStreamService` — replace `XREAD BLOCK 0` with `XREADGROUP GROUP sentinel-consumers worker-1 COUNT 1 BLOCK 5000 STREAMS sentinel:transactions >`.
 - Add an `ack(string $id)` method to `TransactionStreamService` that issues `XACK`.
-- `WatchTransactions` — call `$stream->ack($msgId)` after `$processor->process()` returns (regardless of result — same pattern as the axiom side).
-- Extend `ReclaimAxioms` (or a new shared `ReclaimStream` base) to also recover pending transaction messages via `XCLAIM`.
-- Create the consumer group on first run (use `XGROUP CREATE ... MKSTREAM`).
+- Add an `autoClaim(string $consumer, int $minIdleMs, int $count)` method to `TransactionStreamService` that issues `XAUTOCLAIM`.
+- `WatchTransactions` — restructure the read loop:
+  1. Call `autoClaim` to steal any messages idle > 30s; check delivery count; process or dead-letter; XACK each.
+  2. Call `XREADGROUP >` for new messages; process; XACK.
+- Apply the same XAUTOCLAIM pattern to `WatchAxioms` / `AxiomStreamService`, replacing the `ReclaimAxioms` daemon.
+- Remove `ReclaimAxioms` command and remove `sentinel:reclaim-axioms` from `composer dev-full` / `Procfile`.
+- Create the consumer group on first run (`XGROUP CREATE ... MKSTREAM`).
+- Add `sentinel.reclaim.idle_ms` (default: 30000) to `config/sentinel.php`.
 
 ### Why this matters beyond backpressure
 
-Plain `XREAD` means a worker crash between reading and finishing `process()` silently drops the message — there is no pending entry list, no reclaimer, no retry. This is the crash-safety gap in the existing architecture. XREADGROUP fixes it as a side-effect of being the prerequisite for step 3.
+Plain `XREAD` silently drops messages on worker crash. XREADGROUP gives us a PEL. XAUTOCLAIM embedded in the loop distributes recovery across all running workers — if the reclaimer is down, orphaned messages are still recovered. Fewer processes to deploy and monitor.
+
+Delivery count guard: if `delivery-count >= 3`, log a structured `Log::error` and XACK without processing. This prevents poison messages circulating indefinitely.
 
 ### Definition of done
-- A unit test asserting `XACK` is called after successful processing.
-- A unit test asserting `XACK` is still called when `process()` throws (so the PEL doesn't fill with poison messages — or alternatively, assert the message goes to a DLQ path; document the decision).
-- Kill -9 the transaction worker mid-process in a local dev run; observe the reclaimer picks up the pending message after `min-idle-time`.
-- README architecture table updated to show both streams under reclaimer coverage.
+- Pest test: `XAUTOCLAIM` is called before `XREADGROUP` in each worker loop iteration.
+- Pest test: `XACK` is called after successful processing.
+- Pest test: a message with `delivery-count >= 3` is logged and ACKed without being processed.
+- Kill -9 the transaction worker mid-process; observe the other worker (or a restarted instance) claims the pending message via XAUTOCLAIM after 30s.
+- `ReclaimAxioms` command deleted; `composer dev-full` updated to two processes (web + worker per stream).
+- README architecture table updated — reclaimer row removed, XAUTOCLAIM noted in worker description.
+- Confirm Upstash Redis version ≥ 6.2 before shipping.
 
 ### Out of scope
-- A dead-letter queue for repeatedly failing messages. That's a separate ADR.
-- Multi-consumer fan-out. One consumer group, one worker instance.
+- Multi-consumer fan-out. One consumer group, one worker instance per stream.
+- Retry-with-backoff for dead-lettered messages (deferred per ADR-0022).
 
 ---
 
@@ -98,7 +111,9 @@ XLEN measures stream depth, which decreases as messages are read (even before th
 ## Sequencing
 
 ```
-Step 1 (2h)  →  Step 2 (5h)  →  Step 3 (3h)
+Step 1 (2h)  →  Step 2 (6h)  →  Step 3 (3h)
 ```
 
-Total estimate: ~10 hours across two sessions. Step 1 can ship independently. Steps 2 and 3 should ship as a pair if possible — XREADGROUP without the lag signal is still a net win (crash safety), but the full backpressure story isn't complete until step 3.
+Total estimate: ~11 hours across two sessions. Step 1 can ship independently. Steps 2 and 3 should ship as a pair if possible — XREADGROUP without the lag signal is still a net win (crash safety + reclaimer removal), but the full backpressure story isn't complete until step 3.
+
+Step 2 is now slightly larger than originally estimated because it covers both streams (transactions + axioms) and replaces the reclaimer daemon rather than extending it.

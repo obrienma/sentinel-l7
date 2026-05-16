@@ -1577,3 +1577,62 @@ The first successful processing pass produces the canonical result. A retry unde
 **`source_id` over stream message ID as the idempotency key**
 The XREADGROUP message ID is a valid unique key for a specific delivery. Using it as the idempotency key would tie the persistence model to the delivery mechanism: if the same Axiom were ever re-emitted to the stream with a new message ID (e.g., Synapse-L4 retrying a failed emit), a new row would be inserted for the same logical event. `source_id` is the identity of the Axiom itself — independent of how many times it arrived on the stream. Keying on `source_id` keeps the persistence model decoupled from the delivery mechanism and correctly handles both XAUTOCLAIM re-delivery (same message ID) and upstream re-emission (new message ID, same logical event).
 
+---
+
+## Phase: Backpressure Analysis + ADR-0022 (XAUTOCLAIM Self-Healing Worker Pool)
+*Date: 2026-05-14*
+
+### Summary
+Audited the pipeline for end-to-end backpressure. Found that MAXLEN trim is the only existing flow control — it is lossy (drops old messages) and provides no signal to the producer. The transaction stream additionally uses plain `XREAD` with no consumer group, meaning worker crashes silently drop in-flight messages with no recovery path. Designed a three-step plan: COUNT/XLEN guard (stopgap), XREADGROUP migration (crash safety), and an explicit lag signal via Redis key (true backpressure). The XREADGROUP migration prompted ADR-0022: rather than extending the existing reclaimer daemon to cover both streams, embed `XAUTOCLAIM` in each worker's read loop and remove the reclaimer as a separate process entirely.
+
+A separate gap was identified: Synapse-L4 does not deduplicate — duplicate source events emit two Axiom stream entries. Sentinel-L7's `firstOrCreate` handles the persistence layer correctly but the AI pipeline runs twice before the DB constraint fires. An early-exit `EXISTS` check before the Gemini call was added to the backlog (ADR-0021 context).
+
+---
+
+### Patterns
+
+**MAXLEN trim is lossy producer-side flow control, not backpressure**
+`XADD ... MAXLEN ~ N` caps stream memory but drops old messages silently when the consumer is behind. It has no feedback path to the producer. True backpressure requires the consumer to signal its state — either via XPENDING count written to a shared key or via the producer reading XLEN before publishing. These are fundamentally different mechanisms with different failure modes.
+
+**Q:** What is the difference between MAXLEN trim and backpressure in a Redis Streams pipeline?
+**A:** MAXLEN trim caps stream size by evicting the oldest entries — it is a producer-side memory guard that operates silently and lossily. Backpressure slows or pauses the producer based on consumer state. MAXLEN fires even when the consumer is healthy but slow; backpressure fires only when the consumer is actually overwhelmed. Under MAXLEN alone, a burst that outpaces the consumer silently loses the oldest messages with no record and no producer signal.
+
+---
+
+**XAUTOCLAIM embeds recovery into the consumer loop**
+Rather than a dedicated reclaimer process that polls `XPENDING` + `XCLAIM` on a timer, each worker runs `XAUTOCLAIM` at the top of its loop before reading new messages. If there are no orphaned messages, XAUTOCLAIM returns an empty list cheaply (~1ms). If a worker has crashed, any other running worker claims and reprocesses the orphaned messages on its next iteration. Recovery is distributed — it does not depend on a separate process being alive.
+
+**Q:** What is the operational advantage of XAUTOCLAIM over a dedicated reclaimer process?
+**A:** A dedicated reclaimer is a single point of recovery failure — if it crashes, orphaned messages accumulate in the PEL indefinitely. XAUTOCLAIM embedded in each worker distributes recovery across all running instances. Losing one worker reduces throughput but doesn't stop recovery. It also removes a process from the deployment manifest, reducing operational surface area.
+
+---
+
+**Delivery count guard prevents poison message amplification**
+XAUTOCLAIM claims any message idle beyond the threshold. Without a delivery count check, a message that reliably crashes its worker will be claimed, crash the next worker, become idle again, be claimed again — indefinitely. The guard reads the delivery count from the XAUTOCLAIM response metadata and routes messages with `delivery-count >= N` to a structured error log + XACK rather than reprocessing. This converts an infinite retry loop into a dead-letter record.
+
+**Q:** What is the poison message problem with XAUTOCLAIM and how is it mitigated?
+**A:** A message that consistently causes its worker to crash will be repeatedly claimed by other workers via XAUTOCLAIM after each crash, creating an infinite circulation. The mitigation is a delivery count check: XAUTOCLAIM returns delivery metadata; if `delivery-count >= 3`, the message is logged as a dead letter and XACK'd without processing. The threshold and the structured log give operators visibility without blocking the healthy message flow.
+
+---
+
+### Anti-Patterns
+
+**Using XPENDING count (from XLEN) as the backpressure signal**
+XLEN measures stream depth — the number of unread messages. This drops as soon as a message is read by the consumer, even before it is processed. A slow AI pipeline can have XLEN=0 (all messages read) and XPENDING=200 (all messages in flight, none ACKed). An XLEN-based guard sees no problem; an XPENDING-based guard correctly detects the consumer is overwhelmed. Always use XPENDING count as the backpressure signal, not XLEN.
+
+---
+
+### Challenges
+
+**No challenge during design — the analysis was purely architectural.** The backpressure gaps were identified by reading the existing service files and tracing the Redis command sequence. No unexpected library behaviour or version quirks. The main design tension was between (a) extending the existing reclaimer and (b) embedding XAUTOCLAIM in workers — resolved in favour of (b) after recognising the reclaimer is itself a single point of failure.
+
+---
+
+### Decisions
+
+**XAUTOCLAIM in worker loop over extending the dedicated reclaimer (ADR-0022)**
+The original backpressure plan assumed the reclaimer pattern would be extended to cover the transaction stream. During ADR drafting, the reclaimer was identified as a single point of recovery failure and an additional process to deploy and monitor. XAUTOCLAIM embedded in each worker eliminates the reclaimer entirely while distributing recovery. The tradeoff is that the delivery count guard must be implemented correctly — without it, the worker loop becomes a poison message amplifier. The guard is cheap and testable, so the tradeoff is accepted.
+
+**Graduated lag thresholds over binary pause**
+The lag signal (step 3 of the backpressure plan) uses two thresholds: a soft threshold that introduces a sleep, and a hard threshold that spin-waits. A binary on/off pause was considered but rejected — it produces bursty producer behaviour (sprint to the limit, stop completely, sprint again). Graduated delays smooth the producer rate as the consumer recovers, reducing the amplitude of the oscillation.
+
