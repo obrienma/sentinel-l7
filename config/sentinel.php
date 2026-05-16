@@ -20,6 +20,13 @@ return [
         'publish_pause_ms'        => env('SENTINEL_PUBLISH_PAUSE_MS', 500),
     ],
 
+    'reclaim' => [
+        // Min idle (ms) before an in-flight message can be stolen by XAUTOCLAIM.
+        // See ADR-0022.
+        'idle_ms'              => env('SENTINEL_RECLAIM_IDLE_MS', 30_000),
+        'delivery_count_limit' => env('SENTINEL_RECLAIM_DELIVERY_LIMIT', 3),
+    ],
+
     'simulation' => [
         'merchants' => [
             'Costco',

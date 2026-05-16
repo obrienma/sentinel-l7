@@ -58,20 +58,36 @@ class AxiomStreamService
     }
 
     /**
-     * Claim pending messages that have been idle longer than $minIdleMs.
-     * Uses XAUTOCLAIM — atomically reassigns up to 10 messages at a time.
+     * Claim pending messages idle longer than $minIdleMs via XAUTOCLAIM. Embedded
+     * in each worker's loop so recovery is distributed — losing a worker does not
+     * stop recovery (ADR-0022).
      *
      * @return array Raw stream message entries [[id, [field, value, ...]], ...]
      */
-    public function claimPending(string $consumer, int $minIdleMs = 60_000): array
+    public function autoClaim(string $consumer, int $minIdleMs, int $count = 10): array
     {
         $result = LRedis::executeRaw([
             'XAUTOCLAIM', self::STREAM_KEY, self::GROUP, $consumer,
-            (string) $minIdleMs, '0-0', 'COUNT', '10',
+            (string) $minIdleMs, '0-0', 'COUNT', (string) $count,
         ]);
 
         // XAUTOCLAIM returns [next-start-id, [[id, [fields...]], ...], [deleted-ids]]
         return $result[1] ?? [];
+    }
+
+    /**
+     * Read the delivery count for a single message via XPENDING. Returns 0 if
+     * the message is not in the PEL. Used by the worker loop to dead-letter
+     * poison messages — XAUTOCLAIM itself does not return delivery counts.
+     */
+    public function deliveryCount(string $messageId): int
+    {
+        $result = LRedis::executeRaw([
+            'XPENDING', self::STREAM_KEY, self::GROUP,
+            'IDLE', '0', $messageId, $messageId, '1',
+        ]);
+
+        return isset($result[0][3]) ? (int) $result[0][3] : 0;
     }
 
     /**

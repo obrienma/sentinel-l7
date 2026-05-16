@@ -43,6 +43,7 @@ The compliance/AML domain gave these problems real shape. The input isn't limite
 - [x] Transaction history — processed transactions persisted to Postgres `transactions` table
 - [x] Idempotent Axiom persistence — `firstOrCreate` + partial unique index on `source_id` + `UniqueConstraintViolationException` catch; re-delivered stream messages never produce duplicate `compliance_events` rows
 - [x] Backpressure step 1 — `XREAD COUNT 1` on transaction stream + `XLEN` producer guard (`sentinel.backpressure.publish_pause_threshold`, default 800) pauses `sentinel:stream` when depth exceeds the threshold
+- [x] Backpressure step 2 — XREADGROUP + XAUTOCLAIM self-healing worker pool (ADR-0022): transaction stream migrated to consumer group `sentinel-consumers`; `XAUTOCLAIM` embedded at the top of each worker loop; dead-letter guard ACKs poison messages at `delivery_count >= 3`; dedicated `sentinel:reclaim-axioms` daemon removed
 
 ---
 
@@ -75,17 +76,13 @@ Cache entries carry a **policy epoch** — an md5 hash of the policy corpus stam
 
 On a cache miss, a second namespace containing indexed regulatory policy documents (AML, HIPAA, GDPR) is queried for grounded context. Each policy chunk carries a `domain` metadata tag stamped at ingest time (`aml`, `gdpr`, `hipaa`, …). When a compliance domain is known for the event being analyzed, the query is scoped to that domain via a server-side metadata filter — preventing GDPR chunks from grounding an AML analysis and vice versa. A zero-chunk filtered retrieval is logged explicitly, making silent partial failures visible.
 
-### Fault tolerance (XCLAIM recovery → XAUTOCLAIM self-healing pool)
+### Fault tolerance (XAUTOCLAIM self-healing pool)
 
-A separate reclaimer process monitors the stream's Pending Entry List. If a worker crashes mid-processing, the reclaimer detects the idle message and re-assigns it via `XCLAIM`. Zero message loss.
-
-**Proposed (ADR-0022):** Replace the dedicated reclaimer with an `XAUTOCLAIM` pass embedded at the top of each worker's read loop. Recovery becomes distributed — any running worker claims orphaned messages as part of its normal cycle, eliminating the reclaimer as a separate process and single point of recovery failure.
+Both worker processes (`sentinel:watch`, `sentinel:watch-axioms`) consume their streams via `XREADGROUP`, so unacknowledged messages sit in the Pending Entry List until `XACK`'d. At the top of every loop iteration the worker first runs `XAUTOCLAIM` against the PEL — any message idle longer than `sentinel.reclaim.idle_ms` (default 30s) is reassigned to the current worker and reprocessed. Recovery is distributed across the pool: losing a worker doesn't stop recovery, since any other running worker claims orphaned messages on its next cycle. A delivery-count guard ACKs poison messages at `delivery_count >= 3` (logged as a structured `Log::error`) so a message that reliably crashes its consumer cannot circulate indefinitely. See ADR-0022.
 
 ### Axiom ingestion (Synapse-L4 → Postgres audit trail)
 
 Validated Axioms from the Synapse-L4 sidecar arrive on a dedicated `synapse:axioms` Redis stream. A separate worker (`sentinel:watch-axioms`) consumes them independently of the transaction pipeline using `XREADGROUP` — messages sit in the Pending Entry List until explicitly `XACK`'d after successful processing. Every Axiom is persisted to Postgres (`compliance_events`) regardless of score — no silent drops. When `anomaly_score > 0.8`, the worker fetches relevant policy context from the `policies` vector namespace and sends the Axiom to Gemini Flash for an AI-generated audit narrative. The compliance dashboard surfaces these events with narratives, risk levels, and `source_id` correlation back to EventHorizon.
-
-A dedicated reclaimer (`sentinel:reclaim-axioms`) polls the PEL every 30 seconds and uses `XAUTOCLAIM` to recover any Axiom that has been idle for over 60 seconds — zombie messages from a crashed worker are automatically reprocessed.
 
 Persistence is idempotent: `compliance_events` carries a partial unique index on `source_id` (excluding the `'unknown'` sentinel for malformed Axioms), and the worker uses `firstOrCreate` keyed on `source_id`. If two workers race on the same re-delivered message and both attempt INSERT simultaneously, the second hits the unique constraint; the worker catches `UniqueConstraintViolationException` and treats it as a successful no-op before calling `XACK`. This guarantees exactly-once persistence even under `XAUTOCLAIM` recovery.
 
@@ -129,7 +126,6 @@ graph TB
         Web[Web Dashboard - Inertia/React]
         Worker[Sentinel Consumer - PHP]
         AxiomWorker[Axiom Consumer - PHP]
-        Reclaimer[Safety Reclaimer - PHP]
     end
 
     subgraph "3. Data & Memory (Upstash)"
@@ -146,12 +142,11 @@ graph TB
     Web <-->|OIDC Auth| IdP
     T1 & T2 & T3 -->|XADD| Stream
     SL4 -->|XADD Axioms| AxiomStream
-    Stream -.->|XREADGROUP| Worker
-    AxiomStream -.->|XREAD| AxiomWorker
+    Stream -.->|XREADGROUP + XAUTOCLAIM| Worker
+    AxiomStream -.->|XREADGROUP + XAUTOCLAIM| AxiomWorker
     Worker -->|2a. Search Cache| VectorCache
     Worker -->|2b. Fetch Policies| VectorRules
     Worker -->|3. Reasoning| AI[Gemini Flash]
-    Reclaimer -.->|XCLAIM Zombie Tasks| Stream
     Worker -.->|Real-time Feed| Web
     Worker -->|Update Cache| VectorCache
     AxiomWorker -->|score > 0.8: Fetch Policies| VectorRules
@@ -224,8 +219,8 @@ sequenceDiagram
 
     AW->>AS: XACK (remove from PEL)
 
-    note over AS: Reclaimer (sentinel:reclaim-axioms) polls every 30s
-    note over AS: XAUTOCLAIM any message idle > 60s → reprocess
+    note over AW: Next loop iteration: XAUTOCLAIM
+    note over AW: any message idle > 30s → reassign + reprocess
 ```
 
 ### Message Lifecycle (Fault Tolerance)
@@ -241,7 +236,7 @@ stateDiagram-v2
         Processing --> Zombie: Worker Crashed
     }
 
-    Zombie --> Processing: Reclaimer XCLAIM (min-idle > 60s)
+    Zombie --> Processing: Sibling worker XAUTOCLAIM (min-idle > 30s)
     Success --> [*]
 ```
 
@@ -314,9 +309,6 @@ graph LR
 ## 🚀 Running locally
 
 ```bash
-# Start web + worker + reclaimer
-composer dev-full
-
 # Start dashboard dev (web + queue + logs + vite + axioms worker)
 composer dev
 
@@ -339,7 +331,6 @@ php artisan sentinel:reset-metrics
 - **Silent partial failure alerting** — wire `under_indexed` warnings and `quality_score` logs to an active alert (e.g. N consecutive under-indexed queries on domain X, or `quality_score=0` for N consecutive events)
 - **OAuth on the MCP endpoint** — `Mcp::oauthRoutes()` before production agent access
 - **CI pipeline** — architecture tests + unit suite running on every push
-- **Backpressure (step 2)** — migrate `WatchTransactions` to `XREADGROUP`/`XACK`; embed `XAUTOCLAIM` in both worker loops and remove the dedicated reclaimer daemon (ADR-0022)
 - **Backpressure (step 3)** — explicit consumer lag signal: worker writes `XPENDING` count to `sentinel:consumer_lag`; producer applies graduated delay when lag exceeds threshold
 - **End-to-end idempotency audit** — verify EventHorizon event ID flows through Synapse-L4 as `source_id` on the Axiom; add early-exit dedup in `AxiomProcessorService` before the AI call to avoid redundant Gemini spend on duplicate stream entries
 

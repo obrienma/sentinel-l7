@@ -1,7 +1,7 @@
 # ADR 0022 — XAUTOCLAIM Self-Healing Worker Pool
 
-**Date:** 2026-05-14
-**Status:** Proposed
+**Date:** 2026-05-14 (proposed) → 2026-05-16 (accepted + implemented)
+**Status:** Accepted
 
 ---
 
@@ -38,7 +38,9 @@ Step 1 runs on every iteration. If there are no idle messages, `XAUTOCLAIM` retu
 
 **Idle time threshold:** 30 seconds. Gemini round-trips peak at ~8 seconds under load; 30 seconds gives a factor-of-3 margin before a slow-but-alive worker has its message stolen.
 
-**Delivery count guard:** Before processing an autoclaimed message, check its delivery count via the `XAUTOCLAIM` response metadata. If `delivery-count >= 3`, route to a dead-letter log entry (structured `Log::error`) and XACK without processing. This prevents poison messages from circulating indefinitely.
+**Delivery count guard:** Before processing an autoclaimed message, check its delivery count. If `delivery-count >= 3`, route to a dead-letter log entry (structured `Log::error`) and XACK without processing. This prevents poison messages from circulating indefinitely.
+
+> **Implementation note (2026-05-16):** XAUTOCLAIM does *not* return delivery count metadata in its response (the response shape is `[next-cursor, [[id, [fields...]], ...], [deleted-ids]]`). The guard is therefore implemented as a follow-up `XPENDING <stream> <group> IDLE 0 <id> <id> 1` per claimed message — one extra round-trip per autoclaimed entry. For the default `COUNT 10` per autoClaim pass this is bounded and acceptable. If batch sizes grow significantly, consider a single `XPENDING <stream> <group> - + <count> <consumer>` after the autoClaim and join the responses in memory.
 
 ---
 
@@ -61,12 +63,12 @@ Deferred: adds infrastructure complexity. The delivery-count guard in Option B h
 
 ## Consequences
 
-- [ ] Both `WatchTransactions` and `WatchAxioms` updated to run `XAUTOCLAIM` at the top of each loop iteration
-- [ ] `ReclaimAxioms` command and process removed from `composer dev-full` / `Procfile`
-- [ ] Delivery count guard implemented (log + XACK at `delivery-count >= 3`)
-- [ ] `min-idle-time` extracted to `config/sentinel.php` as `sentinel.reclaim.idle_ms` (default: 30000)
-- [ ] Pest test: assert `XAUTOCLAIM` is called before `XREADGROUP` in each worker loop
-- [ ] Pest test: assert a message with `delivery-count >= 3` is logged and ACKed without being processed
-- [ ] README architecture table updated — reclaimer row removed, XAUTOCLAIM noted in worker row
+- [x] Both `WatchTransactions` and `WatchAxioms` updated to run `XAUTOCLAIM` at the top of each loop iteration
+- [x] `ReclaimAxioms` command and process removed from `composer dev`
+- [x] Delivery count guard implemented (log + XACK at `delivery-count >= 3`) via follow-up XPENDING per claimed message
+- [x] `min-idle-time` extracted to `config/sentinel.php` as `sentinel.reclaim.idle_ms` (default: 30000); poison threshold as `sentinel.reclaim.delivery_count_limit` (default: 3)
+- [x] Pest test: `XAUTOCLAIM` called before `XREADGROUP` in each worker loop iteration
+- [x] Pest test: a message with `delivery-count >= 3` is logged and ACKed without being processed
+- [x] README architecture diagrams updated — reclaimer node removed, XAUTOCLAIM noted on both worker edges
 - [ ] Requires Redis 6.2+ — Upstash supports this; confirm via Upstash dashboard before shipping
-- [ ] This ADR supersedes the reclaimer pattern described in ADR-0016 (Axiom ingestion) and the backpressure plan step 2 (which assumed extending the existing reclaimer to cover transactions)
+- [x] This ADR supersedes the reclaimer pattern described in ADR-0016 (Axiom ingestion) and the backpressure plan step 2 (which assumed extending the existing reclaimer to cover transactions)

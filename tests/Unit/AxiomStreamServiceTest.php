@@ -137,15 +137,21 @@ it('issues XACK with the correct stream key and group', function () {
     (new AxiomStreamService())->ack('3-0');
 });
 
-// ─── claimPending() ──────────────────────────────────────────────────────────
+// ─── autoClaim() ─────────────────────────────────────────────────────────────
 
 it('issues XAUTOCLAIM with the correct parameters', function () {
     LRedis::shouldReceive('executeRaw')
         ->once()
-        ->with(Mockery::on(fn ($args) => $args[0] === 'XAUTOCLAIM' && $args[1] === 'synapse:axioms'))
+        ->with(Mockery::on(fn ($args) =>
+            $args[0] === 'XAUTOCLAIM'
+            && $args[1] === 'synapse:axioms'
+            && $args[2] === 'axiom-workers'
+            && $args[3] === 'axiom-worker-1'
+            && $args[4] === '30000'
+        ))
         ->andReturn(['0-0', [], []]);
 
-    $result = (new AxiomStreamService())->claimPending('axiom-reclaimer');
+    $result = (new AxiomStreamService())->autoClaim('axiom-worker-1', 30_000);
 
     expect($result)->toBeEmpty();
 });
@@ -157,10 +163,32 @@ it('returns claimed messages from XAUTOCLAIM response', function () {
         ->once()
         ->andReturn(['0-0', [$message], []]);
 
-    $result = (new AxiomStreamService())->claimPending('axiom-reclaimer');
+    $result = (new AxiomStreamService())->autoClaim('axiom-worker-1', 30_000);
 
     expect($result)->toHaveCount(1)
         ->and($result[0][0])->toBe('4-0');
+});
+
+// ─── deliveryCount() ─────────────────────────────────────────────────────────
+
+it('returns the delivery count parsed from XPENDING', function () {
+    LRedis::shouldReceive('executeRaw')
+        ->once()
+        ->with(Mockery::on(fn ($args) =>
+            $args[0] === 'XPENDING'
+            && $args[1] === 'synapse:axioms'
+            && $args[2] === 'axiom-workers'
+            && in_array('IDLE', $args, true)
+        ))
+        ->andReturn([['6-0', 'axiom-worker-1', 5000, 3]]);
+
+    expect((new AxiomStreamService())->deliveryCount('6-0'))->toBe(3);
+});
+
+it('returns zero when the message is not in the PEL', function () {
+    LRedis::shouldReceive('executeRaw')->once()->andReturn([]);
+
+    expect((new AxiomStreamService())->deliveryCount('99-0'))->toBe(0);
 });
 
 // ─── parseFields() ───────────────────────────────────────────────────────────

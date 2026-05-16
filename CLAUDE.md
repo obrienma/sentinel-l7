@@ -13,7 +13,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Running the Project
 
 ```bash
-composer dev               # all six processes: serve, queue, logs, vite, sentinel:watch-axioms, sentinel:reclaim-axioms
+composer dev               # all five processes: serve, queue, logs, vite, sentinel:watch-axioms
 composer test              # Pest test suite
 
 php artisan sentinel:stream --limit=100   # simulate transaction stream (writes to sentinel:transactions)
@@ -26,16 +26,15 @@ php artisan sentinel:reset-metrics        # reset dashboard counters
 
 ## Architecture
 
-Four long-running processes form the production system:
+Three long-running processes form the production system:
 
 | Process | Command | Role |
 |---------|---------|------|
 | Web | `php artisan serve` | Inertia/React dashboard |
-| Worker | `php artisan sentinel:watch` | Transaction stream consumer (plain XREAD) |
-| Axioms Worker | `php artisan sentinel:watch-axioms` | Synapse-L4 Axiom consumer (XREADGROUP) |
-| Reclaimer | `php artisan sentinel:reclaim-axioms` | XAUTOCLAIM recovery for stuck Axioms |
+| Worker | `php artisan sentinel:watch` | Transaction stream consumer (XREADGROUP + embedded XAUTOCLAIM) |
+| Axioms Worker | `php artisan sentinel:watch-axioms` | Synapse-L4 Axiom consumer (XREADGROUP + embedded XAUTOCLAIM) |
 
-`composer dev` starts all except `sentinel:watch` (transactions). Run `sentinel:watch` manually when testing the transaction pipeline alongside `sentinel:stream`.
+Both workers run an `XAUTOCLAIM` pass at the top of every loop iteration — recovery is distributed across the pool, no dedicated reclaimer daemon (ADR-0022). `composer dev` starts all except `sentinel:watch` (transactions). Run `sentinel:watch` manually when testing the transaction pipeline alongside `sentinel:stream`.
 
 **Per-transaction pipeline (worker):**
 1. Embed transaction fingerprint → Gemini embedding API → 1536-dim vector
@@ -51,11 +50,14 @@ Tier 3 fallback: if embedding or vector search throws, `ThreatAnalysisService` r
 - `AxiomProcessorService::process()` routes to AI if `anomaly_score > AXIOM_AUDIT_THRESHOLD` (default 0.8)
 - Always persists a `ComplianceEvent` — no Axiom is silently dropped
 - DB-layer dedup: `source_id` has a unique partial index; `UniqueConstraintViolationException` is caught and logged
-- `sentinel:reclaim-axioms` uses `XAUTOCLAIM` to recover messages idle > 60s
 
-**Two Redis streams — different read patterns:**
-- `sentinel:transactions` — plain `XREAD` (no consumer group; `WatchTransactions` holds cursor in memory)
-- `synapse:axioms` — `XREADGROUP` with PEL and `XAUTOCLAIM` reclaimer (`AxiomStreamService`)
+**Worker loop structure (both `sentinel:watch` and `sentinel:watch-axioms`, ADR-0022):**
+1. `XAUTOCLAIM` with `sentinel.reclaim.idle_ms` (default 30000) — for each claimed message, check `deliveryCount(id)` via XPENDING; if `>= sentinel.reclaim.delivery_count_limit` (default 3) → `Log::error` + XACK without processing
+2. `XREADGROUP COUNT 1 BLOCK 5000` for one new message → process → XACK
+
+**Two Redis streams — same read pattern:**
+- `transactions` — `XREADGROUP` on group `sentinel-consumers`
+- `synapse:axioms` — `XREADGROUP` on group `axiom-workers`
 
 ## Key Files
 
@@ -70,7 +72,7 @@ Tier 3 fallback: if embedding or vector search throws, `ThreatAnalysisService` r
 | `app/Services/ComplianceManager.php` | Laravel Service Manager — resolves `gemini` or `openrouter` driver |
 | `app/Contracts/ComplianceDriver.php` | Driver interface: `analyze(array $data): array` |
 | `app/Providers/AppServiceProvider.php` | Binds `ComplianceDriver` → `ComplianceManager::driver()` |
-| `app/Console/Commands/` | Artisan commands (stream, watch, watch-axioms, ingest, reclaim-axioms, reset-metrics) |
+| `app/Console/Commands/` | Artisan commands (stream, watch, watch-axioms, ingest, reset-metrics) |
 | `app/Http/Controllers/ComplianceController.php` | Compliance events page — paginated, flagged/all toggle |
 | `app/Mcp/Servers/SentinelServer.php` | MCP server — exposes AnalyzeTransaction, SearchPolicies, GetRecentTransactions |
 | `resources/js/Pages/` | Inertia page components (.jsx) |
@@ -154,8 +156,7 @@ Create decision logs according to https://martinfowler.com/bliki/ArchitectureDec
 - **Silent partial failure alerting** — connect `GeminiDriver`/`OpenRouterDriver` quality score and retrieval coverage logs to an operational alert (e.g. `quality_score=0` for N consecutive events, or zero-chunk filtered retrieval persists)
 - **Retrieval coverage monitoring** — log mean similarity score per domain per query; declining scores signal knowledge base drift
 - **Domain activation in Axiom pipeline** — `WatchAxioms` or Synapse-L4 emitter needs to stamp `domain` on each Axiom payload for domain-scoped RAG to activate; see ADR-0018
-- **Backpressure step 2** — migrate `WatchTransactions` from `XREAD` to `XREADGROUP`/`XACK`; embed `XAUTOCLAIM` in both worker loops and remove the dedicated reclaimer daemon (see ADR-0022)
-- **Backpressure step 3** — worker writes `XPENDING` count to `sentinel:consumer_lag` Redis key after each batch; producer reads it and applies graduated publish delay (depends on step 2)
+- **Backpressure step 3** — worker writes `XPENDING` count to `sentinel:consumer_lag` Redis key after each batch; producer reads it and applies graduated publish delay
 - **End-to-end idempotency audit** — (1) audit that EventHorizon event ID survives as `source_id` through Synapse-L4 onto the Axiom; (2) add early-exit `EXISTS` check in `AxiomProcessorService` before AI call so duplicate `source_id`s skip Gemini entirely. DB-layer dedup already exists at line 114 but fires too late.
 
 ## Claude Code Workflow Notes

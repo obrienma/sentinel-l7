@@ -1692,3 +1692,87 @@ The plan called for "one threshold, one config key" but two keys (`publish_pause
 **Default threshold of 800 against a MAXLEN of 1000**
 `TransactionStreamService::STREAM_MAXLEN` is 1000. The pause threshold is set at 800 — 80% of capacity — so the producer pauses before the MAXLEN trim starts dropping the oldest unprocessed messages. The 20% headroom absorbs the messages already in the pipe between the XLEN check and the pause taking effect. If MAXLEN ever changes, the threshold should be revisited.
 
+---
+
+## Phase: Backpressure Step 2 — XREADGROUP + XAUTOCLAIM Self-Healing Pool (ADR-0022)
+*Date: 2026-05-16*
+
+### Summary
+Migrated the transaction pipeline from plain `XREAD` to `XREADGROUP` on consumer group `sentinel-consumers`, and embedded an `XAUTOCLAIM` pass at the top of both worker loops (`sentinel:watch`, `sentinel:watch-axioms`). Removed the dedicated `sentinel:reclaim-axioms` daemon entirely — recovery is now distributed across the worker pool. Added a delivery-count guard that ACKs messages whose delivery count reaches 3 with a structured `Log::error`, preventing poison messages from circulating indefinitely. Both stream services gained matching `ensureConsumerGroup`, `readGroup`, `ack`, `autoClaim`, and `deliveryCount` methods so the worker loops are symmetric.
+
+---
+
+### Patterns
+
+**Self-healing worker pool via embedded XAUTOCLAIM**
+Each worker starts every loop iteration with an `XAUTOCLAIM <stream> <group> <consumer> <min-idle-ms> 0-0 COUNT 10` call before its blocking `XREADGROUP > BLOCK 5000`. If no orphans exist, XAUTOCLAIM returns instantly with an empty list (~1ms round-trip cost). If a sibling worker has died mid-processing, any other worker reclaims and reprocesses its abandoned messages on the next cycle. Recovery is parallel rather than serial (every worker contributes), and there is no separate process whose death can stop recovery. The cost is one extra Redis round-trip per loop iteration even when the PEL is empty — a one-time cost that's lost in the noise compared to the blocking read.
+
+**Q:** How is fault tolerance achieved without a dedicated reclaimer process?
+**A:** Each worker runs `XAUTOCLAIM` at the top of every loop iteration. Messages idle longer than `sentinel.reclaim.idle_ms` (default 30s) are reassigned to the current worker. Recovery is distributed: losing one worker doesn't stop recovery because every other worker continues to autoClaim on its normal cycle. The dedicated reclaimer process is eliminated entirely.
+
+---
+
+**Delivery-count guard implemented via follow-up XPENDING**
+ADR-0022 originally described reading the delivery count "from the XAUTOCLAIM response metadata." Implementation revealed that XAUTOCLAIM does not return delivery counts — its response shape is `[next-cursor, [[id, [fields...]], ...], [deleted-ids]]`. The guard was implemented by issuing one `XPENDING <stream> <group> IDLE 0 <id> <id> 1` per claimed message after XAUTOCLAIM returns. Cost: one extra round-trip per autoclaimed entry. For the default `COUNT 10` per autoClaim pass, this is bounded and acceptable. If batches grow, a single `XPENDING ... <consumer>` call can return all delivery counts at once.
+
+**Q:** Why is the XAUTOCLAIM delivery-count guard implemented via a follow-up XPENDING rather than read from the XAUTOCLAIM response?
+**A:** Because XAUTOCLAIM does not include delivery counts in its response — only `[next-cursor, [claimed-messages...], [deleted-ids]]`. The ADR text was incorrect about this. The implementation calls `XPENDING <stream> <group> IDLE 0 <id> <id> 1` per claimed message to read the delivery count. ADR-0022's Decision section was updated with an implementation note explaining the discrepancy.
+
+---
+
+**Symmetric stream service surface across two streams**
+Both `TransactionStreamService` and `AxiomStreamService` now expose the same five XREADGROUP-related methods: `ensureConsumerGroup`, `readGroup`, `ack`, `autoClaim`, `deliveryCount`. Worker commands (`WatchTransactions`, `WatchAxioms`) share the exact same loop structure — only the message-processing inner body differs. This symmetry makes the worker pool pattern obvious to a reader who has seen one of them, and means future changes (poll new metric, change idle threshold semantics, add tracing spans) need to be applied in one shape across two files rather than designed independently.
+
+**Q:** Why do TransactionStreamService and AxiomStreamService expose the same XREADGROUP-related method surface (ensureConsumerGroup, readGroup, ack, autoClaim, deliveryCount)?
+**A:** Because both worker commands use the identical loop shape — autoClaim → delivery-count guard → process or dead-letter → readGroup → process. Keeping the service APIs symmetric means the worker code is also symmetric, and a change to the pool pattern (e.g. new metric, idle threshold semantics) needs to be applied once per stream rather than designed independently.
+
+---
+
+### Anti-Patterns
+
+**Centralised reclaimer as a separate process**
+The original design ran `sentinel:reclaim-axioms` as a dedicated daemon polling `XPENDING + XCLAIM` on a 30-second interval. Rejected for ADR-0022 reasons: (a) it is a single point of recovery failure — if it dies, abandoned messages sit in the PEL indefinitely; (b) recovery is centralised and serial — under a cascade failure the reclaimer processes orphans one at a time while multiple workers sit idle; (c) it adds a process to the deployment manifest that must be monitored independently of the workers it protects. Distributing the recovery into the workers themselves removes all three problems at the cost of one extra round-trip per worker per loop iteration.
+
+**Q:** What are the structural problems with a dedicated reclaimer daemon for Redis Stream PELs?
+**A:** Three: (1) single point of recovery failure — if the reclaimer dies, orphaned messages accumulate indefinitely; (2) recovery is serial and centralised — under cascade failure the reclaimer processes orphans one at a time while multiple workers sit idle; (3) it's an extra process to deploy, monitor, and configure independently. Embedding XAUTOCLAIM in every worker eliminates all three.
+
+---
+
+**Mockery `->once()` expectations as the sole assertion in a Pest test**
+Pest's risky-test detector counts PHPUnit assertions, not Mockery expectation verifications. A test whose only assertion is `$mock->shouldReceive('ack')->once()->with('1-0')` gets flagged "This test did not perform any assertions" even when the expectation is satisfied. Fixed by replacing Mockery expectation assertions with explicit captures — `andReturnUsing(fn ($id) => $acked[] = $id)` — and then asserting with `expect($acked)->toBe(['1-0'])`. Pest sees the expect; the assertion count goes up; the warning goes away.
+
+**Q:** Why are Mockery `->once()->with(...)` expectations alone not enough to satisfy Pest's assertion counter, and what's the fix?
+**A:** Pest's risky-test detector counts PHPUnit assertions, not Mockery expectations. A test whose only assertion is a Mockery `->once()->with(...)` will be flagged "did not perform any assertions" even if the expectation is satisfied. The fix is to replace Mockery expectations with `andReturnUsing(...)` captures into a local variable, then `expect(...)->toBe(...)` on the captured value — Pest sees the explicit `expect` and the risky warning disappears.
+
+---
+
+### Challenges
+
+**XAUTOCLAIM response shape does not include delivery count**
+Discovered when implementing the delivery-count guard. The ADR text said "check delivery count via the XAUTOCLAIM response metadata" but Redis does not include delivery counts in the XAUTOCLAIM response — only IDs, fields, and a deleted-IDs list. Worked around with a follow-up `XPENDING <stream> <group> IDLE 0 <id> <id> 1` per claimed message. The ADR was updated with an implementation note rather than rewritten, since the decision (embed recovery in the worker loop with a poison guard) is unchanged — only the mechanism for reading the counter differs from the ADR's assumed shape.
+
+**Q:** How do you handle the case where an ADR's described mechanism turns out not to exist in the underlying API, but the decision itself is still sound?
+**A:** Add an implementation note to the ADR explaining the discrepancy and the chosen workaround, but don't rewrite the decision. ADR-0022 says "XAUTOCLAIM response metadata" — that's wrong; XAUTOCLAIM does not return delivery counts. The fix was a Decision-section note explaining we use a follow-up XPENDING. The decision (embed recovery + poison guard) holds; only the data source for the counter shifted.
+
+**Existing WatchTransactionsTest helper mocked the old `read()` API with a tightly-coupled signature**
+The `mockStreamWithOneMessage` helper used `shouldReceive('read')->andReturn(['messages' => ..., 'cursor' => '1-0'])`. Migrating to `readGroup` required also mocking `ensureConsumerGroup`, `autoClaim`, and `ack` — three new methods that the worker now calls in addition to `readGroup`. Without mocking all four, the test got Mockery errors ("received call to undefined method") that masked the actual failure. The fix was a single helper update applied in one place; the three inline mocks elsewhere in the file (two ad-hoc stream mocks for specific scenarios) needed the same four-method augmentation. Lesson: when a service grows new methods, audit every test that mocks that service for completeness, not just the helper.
+
+**Q:** What test-suite breakage do you expect when adding methods to a service that several Mockery tests stub out, and what's the systematic fix?
+**A:** Every test using `Mockery::mock(ServiceClass::class)` that doesn't set expectations for the new methods will hit "received call to undefined method" errors when the production code calls them. The fix: grep the test file for `Mockery::mock(ServiceClass::class)` and add `shouldReceive('newMethod')->andReturn(...)` lines (or null/empty defaults) to each one. Treat helpers as the canonical mock setup, but always audit any ad-hoc mocks in the same file — they need the same updates.
+
+---
+
+### Decisions
+
+**Single consumer per group on each stream (for now)**
+Both consumer groups (`sentinel-consumers`, `axiom-workers`) currently have exactly one consumer (`worker-1`, `axiom-worker-1`). The XAUTOCLAIM machinery is in place to support multi-consumer fan-out (any consumer can claim any other consumer's orphans), but the actual deployment runs one worker per stream. Defending against the case where there is no sibling to do the reclaim is *the entire point* of moving away from the dedicated reclaimer pattern — even with one running worker, a restart of that same worker will pick up its own orphans on the next iteration via XAUTOCLAIM. Multi-consumer fan-out is left for when throughput requires it; the loop is ready.
+
+**Q:** With only one worker per stream, what does embedded XAUTOCLAIM buy you compared to a dedicated reclaimer?
+**A:** Single-worker recovery on restart. When the lone worker is killed mid-processing, its messages sit in the PEL idle. On restart (or by a sibling once we scale out), the worker's first XAUTOCLAIM call reclaims its own previously-abandoned messages. With a dedicated reclaimer this still needed a separate, alive process to do the reclaim. Embedded XAUTOCLAIM makes worker restart sufficient recovery — no second process required.
+
+**One stream-key constant per service, not a shared config key**
+The constants `STREAM_KEY = 'transactions'` (TransactionStreamService) and `STREAM_KEY = 'synapse:axioms'` (AxiomStreamService), and the group names `sentinel-consumers` / `axiom-workers`, live as `private const` on each service rather than in `config/sentinel.php`. The reasoning: these names are *identity*, not configuration — they identify which stream the service speaks for. Moving them to config would imply they can be overridden, which would be a footgun (changing the key at runtime detaches the service from its existing PEL). The reclaim *threshold* (`idle_ms`, `delivery_count_limit`) is genuinely tunable per environment and lives in config; the stream identity does not.
+
+**Q:** Why are stream keys and consumer group names class constants on the service rather than entries in config/sentinel.php?
+**A:** Because they are *identity* — they name what stream the service speaks for — not *configuration*. Putting them in config implies they can be overridden, which would be a footgun: changing the key at runtime detaches the service from its existing PEL and the unacknowledged messages would be lost. The reclaim thresholds (`idle_ms`, `delivery_count_limit`) are genuinely tunable per environment and live in config; the stream identity is fixed at the service level.
+

@@ -37,7 +37,7 @@ No architecture change. The risk of a burst flood is real today; this removes it
 
 ---
 
-## Step 2 — Migrate WatchTransactions to XREADGROUP + XAUTOCLAIM recovery
+## Step 2 — Migrate WatchTransactions to XREADGROUP + XAUTOCLAIM recovery ✅ Done (2026-05-16)
 
 **Estimate:** 4–6 hours  
 **GitHub issue:** backpressure: migrate WatchTransactions to XREADGROUP (consumer group)  

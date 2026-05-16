@@ -54,6 +54,7 @@ function mockAxiomStreamWithOneMessage(array $overrides = []): \Mockery\MockInte
 
     $mock = Mockery::mock(AxiomStreamService::class);
     $mock->shouldReceive('ensureConsumerGroup')->andReturnNull();
+    $mock->shouldReceive('autoClaim')->andReturn([]);
     $mock->shouldReceive('readGroup')
         ->andReturnUsing(function () use (&$calls, $msg) {
             $calls++;
@@ -130,6 +131,7 @@ it('processes two axioms from the same read batch', function () {
 
     $stream = Mockery::mock(AxiomStreamService::class);
     $stream->shouldReceive('ensureConsumerGroup')->andReturnNull();
+    $stream->shouldReceive('autoClaim')->andReturn([]);
     $stream->shouldReceive('readGroup')->andReturnUsing(function () use (&$readCalls) {
         $readCalls++;
         if ($readCalls === 1) {
@@ -188,4 +190,109 @@ it('handles a null narrative without throwing', function () {
     $this->app->instance(AxiomProcessorService::class, $processor);
 
     expect(fn () => runAxiomWatcher($this))->not->toThrow(\Exception::class);
+});
+
+// ─── XAUTOCLAIM self-healing pool (ADR-0022) ─────────────────────────────────
+
+it('calls autoClaim before readGroup on every loop iteration', function () {
+    $order = [];
+
+    $stream = Mockery::mock(AxiomStreamService::class);
+    $stream->shouldReceive('ensureConsumerGroup')->andReturnNull();
+    $stream->shouldReceive('ack')->andReturnNull();
+    $stream->shouldReceive('parseFields')->andReturnUsing(fn (array $flat) => parseFakeAxiomFlat($flat));
+    $stream->shouldReceive('autoClaim')->andReturnUsing(function () use (&$order) {
+        $order[] = 'autoClaim';
+        return [];
+    });
+    $stream->shouldReceive('readGroup')->andReturnUsing(function () use (&$order) {
+        $order[] = 'readGroup';
+        throw new \RuntimeException('__test_stop__');
+    });
+
+    $processor = Mockery::mock(AxiomProcessorService::class);
+
+    $this->app->instance(AxiomStreamService::class, $stream);
+    $this->app->instance(AxiomProcessorService::class, $processor);
+
+    runAxiomWatcher($this);
+
+    expect($order)->toBe(['autoClaim', 'readGroup']);
+    Mockery::close();
+});
+
+it('acks a successfully processed new axiom', function () {
+    $msg = fakeAxiomMessage();
+    $ackedIds = [];
+
+    $stream = Mockery::mock(AxiomStreamService::class);
+    $stream->shouldReceive('ensureConsumerGroup')->andReturnNull();
+    $stream->shouldReceive('autoClaim')->andReturn([]);
+    $stream->shouldReceive('parseFields')->andReturnUsing(fn (array $flat) => parseFakeAxiomFlat($flat));
+    $stream->shouldReceive('ack')->andReturnUsing(function ($id) use (&$ackedIds) {
+        $ackedIds[] = $id;
+    });
+
+    $calls = 0;
+    $stream->shouldReceive('readGroup')->andReturnUsing(function () use (&$calls, $msg) {
+        $calls++;
+        if ($calls === 1) return ['messages' => [$msg]];
+        throw new \RuntimeException('__test_stop__');
+    });
+
+    $processor = Mockery::mock(AxiomProcessorService::class);
+    $processor->shouldReceive('process')->andReturn([
+        'source_id' => 'sensor-42', 'routed_to_ai' => false,
+        'risk_level' => 'low', 'narrative' => null, 'elapsed_ms' => 1.0,
+    ]);
+
+    $this->app->instance(AxiomStreamService::class, $stream);
+    $this->app->instance(AxiomProcessorService::class, $processor);
+
+    runAxiomWatcher($this);
+
+    expect($ackedIds)->toBe(['1-0']);
+    Mockery::close();
+});
+
+it('dead-letters a reclaimed axiom whose delivery count exceeds the limit', function () {
+    $loggedContext = null;
+    \Illuminate\Support\Facades\Log::shouldReceive('error')
+        ->andReturnUsing(function ($msg, $ctx) use (&$loggedContext) {
+            $loggedContext = ['msg' => $msg, 'ctx' => $ctx];
+        });
+
+    $orphan = fakeAxiomMessage(['source_id' => 'sensor-poison']);
+    $ackedIds = [];
+
+    $stream = Mockery::mock(AxiomStreamService::class);
+    $stream->shouldReceive('ensureConsumerGroup')->andReturnNull();
+    $stream->shouldReceive('autoClaim')->andReturnUsing(function () use ($orphan) {
+        static $first = true;
+        if ($first) { $first = false; return [$orphan]; }
+        return [];
+    });
+    $stream->shouldReceive('deliveryCount')->with('1-0')->andReturn(4);
+    $stream->shouldReceive('ack')->andReturnUsing(function ($id) use (&$ackedIds) {
+        $ackedIds[] = $id;
+    });
+    $stream->shouldReceive('parseFields')->andReturnUsing(fn (array $flat) => parseFakeAxiomFlat($flat));
+    $stream->shouldReceive('readGroup')->andReturnUsing(function () {
+        throw new \RuntimeException('__test_stop__');
+    });
+
+    $processor = Mockery::mock(AxiomProcessorService::class);
+    $processor->shouldNotReceive('process');
+
+    $this->app->instance(AxiomStreamService::class, $stream);
+    $this->app->instance(AxiomProcessorService::class, $processor);
+
+    runAxiomWatcher($this);
+
+    expect($ackedIds)->toBe(['1-0'])
+        ->and($loggedContext['msg'])->toBe('sentinel:watch-axioms dead-letter — delivery count exceeded')
+        ->and($loggedContext['ctx']['message_id'])->toBe('1-0')
+        ->and($loggedContext['ctx']['stream'])->toBe('synapse:axioms');
+
+    Mockery::close();
 });
