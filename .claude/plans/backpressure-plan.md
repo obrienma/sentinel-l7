@@ -14,7 +14,7 @@
 
 ---
 
-## Step 1 — COUNT limit on XREAD + XLEN producer guard
+## Step 1 — COUNT limit on XREAD + XLEN producer guard ✅ Done (2026-05-16)
 
 **Estimate:** 1–2 hours  
 **GitHub issue:** backpressure: add COUNT limit to transaction XREAD + XLEN producer guard

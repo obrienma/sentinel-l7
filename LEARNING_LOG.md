@@ -1636,3 +1636,59 @@ The original backpressure plan assumed the reclaimer pattern would be extended t
 **Graduated lag thresholds over binary pause**
 The lag signal (step 3 of the backpressure plan) uses two thresholds: a soft threshold that introduces a sleep, and a hard threshold that spin-waits. A binary on/off pause was considered but rejected — it produces bursty producer behaviour (sprint to the limit, stop completely, sprint again). Graduated delays smooth the producer rate as the consumer recovers, reducing the amplitude of the oscillation.
 
+---
+
+## Phase: Backpressure Step 1 — XREAD COUNT + XLEN Producer Guard
+*Date: 2026-05-16*
+
+### Summary
+Implemented the stopgap from the backpressure plan: `XREAD` on `TransactionStreamService::read()` now passes `COUNT 1`, and `sentinel:stream` checks `XLEN` before each `XADD`, pausing the publisher whenever depth exceeds `sentinel.backpressure.publish_pause_threshold` (default 800). No architecture change — this removes burst-flood risk in the existing single-worker plain-XREAD setup while Step 2 (XREADGROUP + XAUTOCLAIM) is still pending.
+
+---
+
+### Patterns
+
+**Bounded read with explicit COUNT on XREAD**
+`XREAD STREAMS <key> $` with no `COUNT` returns every message that has arrived since the last cursor. On a deep stream that means the worker pulls the entire backlog into a single in-memory batch and then loops over it. Adding `COUNT 1` forces the read loop to drain one message at a time. The loop iteration cost is unchanged — Redis still blocks on the next message — but it eliminates the catch-up burst where a worker reads N messages in a single network round-trip and then races through them without yielding to other concerns (signal handlers, cooperative shutdown, etc.).
+
+**Q:** Why add `COUNT 1` to a blocking `XREAD` call when the loop only processes one message per iteration anyway?
+**A:** Without `COUNT`, a single `XREAD` returns *all* messages newer than the cursor — on a deep stream that's the entire backlog in one batch. `COUNT 1` caps the batch at one message regardless of stream depth, so the read loop processes exactly one message per network round-trip and yields control back to signal handlers and other checks between each one.
+
+---
+
+**Producer-side XLEN guard with cooperative shutdown**
+The publisher reads `XLEN` before each `XADD`. If depth exceeds the configured threshold, it enters an inner `while` loop that sleeps for `publish_pause_ms` and re-checks depth. The loop also checks `$shouldStop` each iteration so SIGINT/SIGTERM is honoured during a pause — without that check, a publisher that hits the threshold during shutdown would block until the stream drained. The pattern is the same cooperative-shutdown idiom used by the outer foreach (`$shouldStop` flag set by signal handler, polled by the loop) — extended into the wait state.
+
+**Q:** Why does the XLEN-pause inner loop also check `$shouldStop` instead of relying on the outer foreach's check?
+**A:** Because the inner loop can spin indefinitely while the stream is deep. If SIGINT/SIGTERM arrives during a pause, the outer foreach's stop check never runs — execution is trapped inside `usleep + depth()` calls. Checking `$shouldStop` inside the inner loop and `break 2`-ing out is what makes shutdown responsive while the producer is paused.
+
+---
+
+### Anti-Patterns
+
+**Inlining XLEN into the command via the Redis facade**
+`StreamTransactions` could have called `LRedis::executeRaw(['XLEN', ...])` directly. Rejected because (a) the command would then duplicate the stream-key knowledge that already lives in `TransactionStreamService` as a class constant, and (b) the existing Pest tests already mock the service via `$this->app->instance(...)`, so adding a `depth()` method to the service makes the SIGINT/SIGTERM tests one-line additions (`shouldReceive('depth')->andReturn(0)`) rather than rewriting the LRedis expectations. Keep stream operations on the stream service; let the command stay a thin orchestrator.
+
+**Q:** Why is `XLEN` exposed as `TransactionStreamService::depth()` rather than called inline from `StreamTransactions`?
+**A:** Two reasons. First, the stream key is a class constant on `TransactionStreamService` — calling XLEN inline in the command would either duplicate the key string or import the constant, both worse than a one-line method. Second, the existing feature tests mock the service object, so exposing `depth()` means the new backpressure path is mockable without rewriting the LRedis expectations the SIGINT/SIGTERM tests rely on.
+
+---
+
+### Challenges
+
+**Existing feature tests had tight LRedis expectations that broke when a new XLEN call appeared**
+`StreamTransactionsTest` had `LRedis::shouldReceive('executeRaw')->once()` expecting a single XADD per published transaction. Adding the `depth()` call before publish meant Mockery saw an extra `executeRaw(['XLEN', 'transactions'])` and failed the `once()` constraint. Resolved by adding a separate `shouldReceive('executeRaw')->with(['XLEN', 'transactions'])->andReturn(0)` expectation alongside the XADD expectation. The `with(...)` matcher routes each call to the right expectation. The SIGINT/SIGTERM tests had a different shape — they mock the whole `TransactionStreamService` — so the fix there was a one-line `shouldReceive('depth')->andReturn(0)`.
+
+**Q:** What is the gotcha when a service method that wraps a Redis facade gains a new internal Redis call, and existing tests mock the facade with `->once()`?
+**A:** The `->once()` constraint counts *all* calls to the mocked method, regardless of arguments. Adding a new internal call breaks the constraint even though the original call still happens exactly once. Either add a per-args expectation with `->with(...)` to route the new call separately, or switch the test to mock the service object (not the facade) so the test asserts on the service's public API rather than the internals.
+
+---
+
+### Decisions
+
+**Two config keys under `sentinel.backpressure`, not one**
+The plan called for "one threshold, one config key" but two keys (`publish_pause_threshold` + `publish_pause_ms`) felt necessary — without a tunable pause interval, the publisher either spins at 100% CPU re-checking XLEN (pause=0) or stalls in clumsy half-second blocks (pause hardcoded). Both keys live under `sentinel.backpressure.*`, matching the naming pattern reserved for Step 3 (`backpressure.lag_warn`, `backpressure.lag_pause`). Keeping the namespace consistent now avoids a config restructure when Step 3 lands.
+
+**Default threshold of 800 against a MAXLEN of 1000**
+`TransactionStreamService::STREAM_MAXLEN` is 1000. The pause threshold is set at 800 — 80% of capacity — so the producer pauses before the MAXLEN trim starts dropping the oldest unprocessed messages. The 20% headroom absorbs the messages already in the pipe between the XLEN check and the pause taking effect. If MAXLEN ever changes, the threshold should be revisited.
+

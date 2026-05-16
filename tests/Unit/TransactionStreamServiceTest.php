@@ -87,6 +87,28 @@ it('returns an empty messages array when the stream has no messages', function (
     expect($service->read())->toBe(['messages' => [], 'cursor' => '$']);
 });
 
+it('reads one message at a time (COUNT 1) so a deep stream cannot flood the loop', function () {
+    LRedis::shouldReceive('executeRaw')
+        ->once()
+        ->with(Mockery::on(function ($args) {
+            return $args[0] === 'XREAD'
+                && in_array('COUNT', $args, true)
+                && $args[array_search('COUNT', $args, true) + 1] === '1';
+        }))
+        ->andReturn(null);
+
+    (new TransactionStreamService())->read();
+});
+
+it('returns the current stream depth via XLEN', function () {
+    LRedis::shouldReceive('executeRaw')
+        ->once()
+        ->with(['XLEN', 'transactions'])
+        ->andReturn(42);
+
+    expect((new TransactionStreamService())->depth())->toBe(42);
+});
+
 it('returns decoded messages from the stream', function () {
     $fakeMessages = [['1-0', ['data', '{"merchant":"Costco","amount":9.99}']]];
 

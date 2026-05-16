@@ -42,6 +42,7 @@ The compliance/AML domain gave these problems real shape. The input isn't limite
 - [x] XCLAIM recovery for `synapse:axioms` consumer group — `sentinel:reclaim-axioms` command
 - [x] Transaction history — processed transactions persisted to Postgres `transactions` table
 - [x] Idempotent Axiom persistence — `firstOrCreate` + partial unique index on `source_id` + `UniqueConstraintViolationException` catch; re-delivered stream messages never produce duplicate `compliance_events` rows
+- [x] Backpressure step 1 — `XREAD COUNT 1` on transaction stream + `XLEN` producer guard (`sentinel.backpressure.publish_pause_threshold`, default 800) pauses `sentinel:stream` when depth exceeds the threshold
 
 ---
 
@@ -338,7 +339,6 @@ php artisan sentinel:reset-metrics
 - **Silent partial failure alerting** — wire `under_indexed` warnings and `quality_score` logs to an active alert (e.g. N consecutive under-indexed queries on domain X, or `quality_score=0` for N consecutive events)
 - **OAuth on the MCP endpoint** — `Mcp::oauthRoutes()` before production agent access
 - **CI pipeline** — architecture tests + unit suite running on every push
-- **Backpressure (step 1)** — add `COUNT 1` to transaction `XREAD` + `XLEN` producer guard in `StreamTransactions` to prevent burst floods
 - **Backpressure (step 2)** — migrate `WatchTransactions` to `XREADGROUP`/`XACK`; embed `XAUTOCLAIM` in both worker loops and remove the dedicated reclaimer daemon (ADR-0022)
 - **Backpressure (step 3)** — explicit consumer lag signal: worker writes `XPENDING` count to `sentinel:consumer_lag`; producer applies graduated delay when lag exceeds threshold
 - **End-to-end idempotency audit** — verify EventHorizon event ID flows through Synapse-L4 as `source_id` on the Axiom; add early-exit dedup in `AxiomProcessorService` before the AI call to avoid redundant Gemini spend on duplicate stream entries

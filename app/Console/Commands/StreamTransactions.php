@@ -22,6 +22,8 @@ class StreamTransactions extends Command
 
         $limit = (int) $this->option('limit');
         $count = 0;
+        $threshold = (int) config('sentinel.backpressure.publish_pause_threshold');
+        $pauseMs   = (int) config('sentinel.backpressure.publish_pause_ms');
 
         $this->info("Sentinel-L7: Monitoring layers" . ($limit > 0 ? " (Limit: $limit)" : ""));
 
@@ -29,6 +31,15 @@ class StreamTransactions extends Command
             if ($this->shouldStop) {
                 $this->info("Signal received. Powering down.");
                 break;
+            }
+
+            while ($stream->depth() > $threshold) {
+                $this->warn("Stream depth above {$threshold}, pausing publisher for {$pauseMs}ms");
+                usleep($pauseMs * 1000);
+                if ($this->shouldStop) {
+                    $this->info("Signal received. Powering down.");
+                    break 2;
+                }
             }
 
             if ($stream->publish($transaction)) {

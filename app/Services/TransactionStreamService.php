@@ -47,6 +47,14 @@ class TransactionStreamService
     }
 
     /**
+     * Current stream depth (XLEN). Used by the producer as a backpressure signal.
+     */
+    public function depth(): int
+    {
+        return (int) LRedis::executeRaw(['XLEN', self::STREAM_KEY]);
+    }
+
+    /**
      * Block-reads new messages from the stream.
      * Pass '$' on first call to receive only new messages.
      *
@@ -55,7 +63,7 @@ class TransactionStreamService
      */
     public function read(string $lastId = '$'): array
     {
-        $results = LRedis::executeRaw(['XREAD', 'BLOCK', '0', 'STREAMS', self::STREAM_KEY, $lastId]);
+        $results = LRedis::executeRaw(['XREAD', 'COUNT', '1', 'BLOCK', '0', 'STREAMS', self::STREAM_KEY, $lastId]);
 
         if (!$results) {
             return ['messages' => [], 'cursor' => $lastId];
