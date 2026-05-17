@@ -216,3 +216,47 @@ it('returns zero when the message is not in the PEL', function () {
 
     expect((new TransactionStreamService())->deliveryCount('99-0'))->toBe(0);
 });
+
+// ─── pendingCount() ───────────────────────────────────────────────────────────
+
+it('issues XPENDING summary form and returns the total pending count', function () {
+    LRedis::shouldReceive('executeRaw')
+        ->once()
+        ->with(['XPENDING', 'transactions', 'sentinel-consumers'])
+        ->andReturn([37, '1-0', '5-0', [['worker-1', '37']]]);
+
+    expect((new TransactionStreamService())->pendingCount())->toBe(37);
+});
+
+it('returns zero when XPENDING reports no pending messages', function () {
+    LRedis::shouldReceive('executeRaw')->once()->andReturn([0, null, null, []]);
+
+    expect((new TransactionStreamService())->pendingCount())->toBe(0);
+});
+
+// ─── writeLagKey() ────────────────────────────────────────────────────────────
+
+it('writes sentinel:consumer_lag with a 10-second TTL', function () {
+    LRedis::shouldReceive('set')
+        ->once()
+        ->with('sentinel:consumer_lag', 42, 'EX', 10);
+
+    (new TransactionStreamService())->writeLagKey(42);
+});
+
+// ─── readLagKey() ─────────────────────────────────────────────────────────────
+
+it('reads sentinel:consumer_lag and returns its integer value', function () {
+    LRedis::shouldReceive('get')
+        ->once()
+        ->with('sentinel:consumer_lag')
+        ->andReturn('73');
+
+    expect((new TransactionStreamService())->readLagKey())->toBe(73);
+});
+
+it('returns zero when the lag key is absent or expired', function () {
+    LRedis::shouldReceive('get')->once()->andReturn(null);
+
+    expect((new TransactionStreamService())->readLagKey())->toBe(0);
+});

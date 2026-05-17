@@ -20,10 +20,14 @@ class StreamTransactions extends Command
             pcntl_signal(SIGINT,  fn () => $this->shouldStop = true);
         }
 
-        $limit = (int) $this->option('limit');
-        $count = 0;
-        $threshold = (int) config('sentinel.backpressure.publish_pause_threshold');
-        $pauseMs   = (int) config('sentinel.backpressure.publish_pause_ms');
+        $limit        = (int) $this->option('limit');
+        $count        = 0;
+        $threshold    = (int) config('sentinel.backpressure.publish_pause_threshold');
+        $pauseMs      = (int) config('sentinel.backpressure.publish_pause_ms');
+        $lagWarn      = (int) config('sentinel.backpressure.lag_warn');
+        $lagPause     = (int) config('sentinel.backpressure.lag_pause');
+        $lagWarnSleep = (int) config('sentinel.backpressure.lag_warn_sleep_ms');
+        $lagPollMs    = (int) config('sentinel.backpressure.lag_pause_poll_ms');
 
         $this->info("Sentinel-L7: Monitoring layers" . ($limit > 0 ? " (Limit: $limit)" : ""));
 
@@ -40,6 +44,22 @@ class StreamTransactions extends Command
                     $this->info("Signal received. Powering down.");
                     break 2;
                 }
+            }
+
+            $lag = $stream->readLagKey();
+
+            if ($lag > $lagPause) {
+                $this->warn("Consumer lag {$lag} above hard limit {$lagPause}, pausing until drained");
+                while ($stream->readLagKey() > $lagPause) {
+                    usleep($lagPollMs * 1000);
+                    if ($this->shouldStop) {
+                        $this->info("Signal received. Powering down.");
+                        break 2;
+                    }
+                }
+            } elseif ($lag > $lagWarn) {
+                $this->warn("Consumer lag {$lag} above soft limit {$lagWarn}, sleeping {$lagWarnSleep}ms");
+                usleep($lagWarnSleep * 1000);
             }
 
             if ($stream->publish($transaction)) {

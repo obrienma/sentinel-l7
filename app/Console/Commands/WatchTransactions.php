@@ -49,6 +49,8 @@ class WatchTransactions extends Command
                 $this->processMessage($streamMsg, $processor);
                 $stream->ack($streamMsg[0]);
             }
+
+            $stream->writeLagKey($stream->pendingCount());
         }
     }
 

@@ -50,6 +50,8 @@ function mockStreamWithOneMessage(array $messageOverrides = []): \Mockery\MockIn
     $mock->shouldReceive('ensureConsumerGroup')->andReturnNull();
     $mock->shouldReceive('autoClaim')->andReturn([]);
     $mock->shouldReceive('ack')->andReturnNull();
+    $mock->shouldReceive('pendingCount')->andReturn(0);
+    $mock->shouldReceive('writeLagKey')->andReturnNull();
     $mock->shouldReceive('readGroup')
         ->andReturnUsing(function () use (&$calls, $messageOverrides) {
             $calls++;
@@ -407,6 +409,8 @@ it('handles transactions with missing optional fields gracefully', function () {
     $stream->shouldReceive('ensureConsumerGroup')->andReturnNull();
     $stream->shouldReceive('autoClaim')->andReturn([]);
     $stream->shouldReceive('ack')->andReturnNull();
+    $stream->shouldReceive('pendingCount')->andReturn(0);
+    $stream->shouldReceive('writeLagKey')->andReturnNull();
     $stream->shouldReceive('readGroup')->andReturnUsing(function () use (&$calls, $minimalMessage) {
         $calls++;
         if ($calls === 1) return ['messages' => [$minimalMessage]];
@@ -640,6 +644,8 @@ it('increments metrics for each transaction independently', function () {
     $stream->shouldReceive('ensureConsumerGroup')->andReturnNull();
     $stream->shouldReceive('autoClaim')->andReturn([]);
     $stream->shouldReceive('ack')->andReturnNull();
+    $stream->shouldReceive('pendingCount')->andReturn(0);
+    $stream->shouldReceive('writeLagKey')->andReturnNull();
     $stream->shouldReceive('readGroup')->andReturnUsing(function () use (&$calls) {
         $calls++;
         if ($calls === 1) return ['messages' => [
@@ -689,13 +695,14 @@ it('calls autoClaim before readGroup on every loop iteration', function () {
     $stream = Mockery::mock(TransactionStreamService::class);
     $stream->shouldReceive('ensureConsumerGroup')->andReturnNull();
     $stream->shouldReceive('ack')->andReturnNull();
+    $stream->shouldReceive('pendingCount')->andReturn(0);
+    $stream->shouldReceive('writeLagKey')->andReturnNull();
     $stream->shouldReceive('autoClaim')->andReturnUsing(function () use (&$order) {
         $order[] = 'autoClaim';
         return [];
     });
     $stream->shouldReceive('readGroup')->andReturnUsing(function () use (&$order) {
         $order[] = 'readGroup';
-        // One loop iteration is enough to observe the ordering.
         throw new \RuntimeException('__test_stop__');
     });
 
@@ -713,6 +720,8 @@ it('acks a successfully processed new message', function () {
     $stream = Mockery::mock(TransactionStreamService::class);
     $stream->shouldReceive('ensureConsumerGroup')->andReturnNull();
     $stream->shouldReceive('autoClaim')->andReturn([]);
+    $stream->shouldReceive('pendingCount')->andReturn(0);
+    $stream->shouldReceive('writeLagKey')->andReturnNull();
     $stream->shouldReceive('ack')->andReturnUsing(function ($id) use (&$ackedIds) {
         $ackedIds[] = $id;
     });
@@ -763,6 +772,8 @@ it('dead-letters a reclaimed message whose delivery count exceeds the limit', fu
 
     $stream = Mockery::mock(TransactionStreamService::class);
     $stream->shouldReceive('ensureConsumerGroup')->andReturnNull();
+    $stream->shouldReceive('pendingCount')->andReturn(0);
+    $stream->shouldReceive('writeLagKey')->andReturnNull();
     $stream->shouldReceive('autoClaim')->andReturnUsing(function () use ($orphan) {
         static $first = true;
         if ($first) { $first = false; return [$orphan]; }
@@ -798,5 +809,50 @@ it('dead-letters a reclaimed message whose delivery count exceeds the limit', fu
         ->and($loggedContext['ctx']['message_id'])->toBe('1-0')
         ->and($loggedContext['ctx']['stream'])->toBe('transactions');
 
+    Mockery::close();
+});
+
+// ─── Consumer lag signal (ADR-0023) ──────────────────────────────────────────
+
+it('writes the pending count to the lag key after every readGroup cycle', function () {
+    $writtenLagValues = [];
+
+    $stream = Mockery::mock(TransactionStreamService::class);
+    $stream->shouldReceive('ensureConsumerGroup')->andReturnNull();
+    $stream->shouldReceive('autoClaim')->andReturn([]);
+    $stream->shouldReceive('ack')->andReturnNull();
+    $stream->shouldReceive('pendingCount')->andReturn(7);
+    $stream->shouldReceive('writeLagKey')->andReturnUsing(function ($v) use (&$writtenLagValues) {
+        $writtenLagValues[] = $v;
+    });
+
+    $calls = 0;
+    $stream->shouldReceive('readGroup')->andReturnUsing(function () use (&$calls) {
+        $calls++;
+        if ($calls === 1) return ['messages' => [fakeStreamMessage()]];
+        throw new \RuntimeException('__test_stop__');
+    });
+
+    $fakeVector = array_fill(0, 1536, 0.1);
+    $embedding = Mockery::mock(EmbeddingService::class);
+    $embedding->shouldReceive('createTransactionFingerprint')->andReturn('fp');
+    $embedding->shouldReceive('embed')->andReturn($fakeVector);
+
+    $vectorCache = Mockery::mock(VectorCacheService::class);
+    $vectorCache->shouldReceive('search')->andReturn(null);
+    $vectorCache->shouldReceive('upsert')->andReturnNull();
+
+    $analyzer = Mockery::mock(ThreatAnalysisService::class);
+    $analyzer->shouldReceive('analyze')
+        ->andReturn(ThreatResult::clear(['merchant' => 'Costco', 'amount' => 9.99]));
+
+    $this->app->instance(TransactionStreamService::class, $stream);
+    $this->app->instance(EmbeddingService::class, $embedding);
+    $this->app->instance(VectorCacheService::class, $vectorCache);
+    $this->app->instance(ThreatAnalysisService::class, $analyzer);
+
+    runWatcher($this);
+
+    expect($writtenLagValues)->toContain(7);
     Mockery::close();
 });

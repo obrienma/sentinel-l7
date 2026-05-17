@@ -156,7 +156,7 @@ Create decision logs according to https://martinfowler.com/bliki/ArchitectureDec
 - **Silent partial failure alerting** — connect `GeminiDriver`/`OpenRouterDriver` quality score and retrieval coverage logs to an operational alert (e.g. `quality_score=0` for N consecutive events, or zero-chunk filtered retrieval persists)
 - **Retrieval coverage monitoring** — log mean similarity score per domain per query; declining scores signal knowledge base drift
 - **Domain activation in Axiom pipeline** — `WatchAxioms` or Synapse-L4 emitter needs to stamp `domain` on each Axiom payload for domain-scoped RAG to activate; see ADR-0018
-- **Backpressure step 3** — worker writes `XPENDING` count to `sentinel:consumer_lag` Redis key after each batch; producer reads it and applies graduated publish delay
+- **Backpressure dashboard** — surface `sentinel:consumer_lag` on the metrics dashboard (the key is already written by the worker; just needs a UI widget)
 - **End-to-end idempotency audit** — (1) audit that EventHorizon event ID survives as `source_id` through Synapse-L4 onto the Axiom; (2) add early-exit `EXISTS` check in `AxiomProcessorService` before AI call so duplicate `source_id`s skip Gemini entirely. DB-layer dedup already exists at line 114 but fires too late.
 
 ## Claude Code Workflow Notes

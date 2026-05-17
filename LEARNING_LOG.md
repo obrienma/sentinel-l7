@@ -1776,3 +1776,64 @@ The constants `STREAM_KEY = 'transactions'` (TransactionStreamService) and `STRE
 **Q:** Why are stream keys and consumer group names class constants on the service rather than entries in config/sentinel.php?
 **A:** Because they are *identity* — they name what stream the service speaks for — not *configuration*. Putting them in config implies they can be overridden, which would be a footgun: changing the key at runtime detaches the service from its existing PEL and the unacknowledged messages would be lost. The reclaim thresholds (`idle_ms`, `delivery_count_limit`) are genuinely tunable per environment and live in config; the stream identity is fixed at the service level.
 
+---
+
+## Phase: Backpressure Step 3 — Graduated Consumer Lag Signal (ADR-0023)
+*Date: 2026-05-16*
+
+### Summary
+Completed the backpressure plan. `WatchTransactions` now writes an `XPENDING` count to `sentinel:consumer_lag` (TTL 10s) after every `readGroup` cycle via `writeLagKey(pendingCount())`. `StreamTransactions` reads this key before each `XADD` and applies a graduated delay: a one-shot 500ms sleep when lag exceeds the soft limit (50), and a spin-wait when lag exceeds the hard limit (200). Both loops honour SIGINT/SIGTERM. All four threshold values are configurable via `config/sentinel.php`.
+
+---
+
+### Patterns
+
+**XPENDING count as the consumer-health signal, not XLEN**
+`XLEN` decreases when a message is *read*, not when it's *processed*. A slow AI call (4–8s Gemini round-trip) means `XLEN` can be zero while dozens of messages are in the PEL waiting acknowledgement. `XPENDING` (summary form: `XPENDING <stream> <group>`) reports the count of unacknowledged messages — actual work in flight. This is the correct proxy for "is the consumer overwhelmed?" The lag key TTL of 10s means a dead consumer's lag naturally decays to zero, letting the producer publish freely while the existing XAUTOCLAIM recovery path handles the in-flight messages.
+
+**Q:** Why use XPENDING count as the backpressure signal rather than XLEN?
+**A:** XLEN measures stream *depth* (unread messages) — it drops as soon as a worker reads a message, even before processing completes. XPENDING measures *unacknowledged* messages — work actually in flight. A slow AI pipeline with XLEN=0 and XPENDING=50 is overwhelmed; an XLEN guard would see no problem. The XPENDING count written to `sentinel:consumer_lag` is the accurate signal.
+
+---
+
+**Graduated delay over binary pause**
+A binary pause (publish when lag < N, stop when lag ≥ N) produces oscillating producer behaviour: sprint to the threshold, full stop, burst to recover, sprint again — amplifying lag variance. Two graduated thresholds smooth the producer rate: at the soft limit the producer sleeps briefly and continues; at the hard limit it polls every 100ms until the consumer catches up. The oscillation amplitude shrinks because the producer never completely stops — it slows proportionally to the consumer's distress.
+
+**Q:** Why use two graduated thresholds rather than a single binary pause?
+**A:** A binary pause produces sprint-and-stop oscillations that amplify lag variance. The soft limit introduces a brief delay before each message when the consumer is moderately behind, slowing the producer gradually. The hard limit holds the producer in a poll loop, giving the consumer time to process accumulated work. Together they dampen oscillation without ever fully stopping the producer.
+
+---
+
+**Expiring lag key as a safe default**
+The lag key is set with `EX 10` (10-second TTL). If the worker stops writing — crash, restart, or scheduled stop — the key expires and `readLagKey()` returns 0. The producer treats missing lag as zero and publishes freely. This is the safe default: a dead consumer means the stream will deepen, and the existing XAUTOCLAIM + XLEN depth guard are the right mitigations. Stale lag should not block publishing indefinitely.
+
+**Q:** Why does the lag key have a TTL, and what happens when it expires?
+**A:** A 10-second TTL means the key expires if the worker stops writing. `readLagKey()` returns 0 for a missing key — the producer treats it as "no lag" and publishes freely. This is intentional: a dead consumer is handled by the XAUTOCLAIM recovery path and the XLEN depth guard. Blocking the producer on stale lag would add a second failure mode on top of the consumer being down.
+
+---
+
+### Anti-Patterns
+
+**Using Mockery `replace_all` on a line that appears in tests with different semantics**
+The `replace_all` parameter in `Edit` replaces every occurrence of the target string. After adding `readLagKey` to the existing `$stream->shouldReceive('depth')->andReturn(0);` lines to patch all existing tests at once, the replacement also added `$stream->shouldReceive('readLagKey')->andReturn(0);` immediately before the `andReturnUsing(...)` expectation in the two new lag tests — giving Mockery two competing expectations for `readLagKey`. Mockery consumed the first (`andReturn(0)`) first, so `readLagKey` always returned 0 and the lag logic was never entered. Removed the duplicate `andReturn(0)` expectations from the two tests that owned their own `andReturnUsing` mock. Lesson: `replace_all` is unsafe when the same string pattern appears in contexts with different test semantics.
+
+**Q:** What is the risk of using `replace_all` on a pattern that appears in tests with different purposes?
+**A:** `replace_all` replaces every occurrence verbatim, regardless of context. Adding a stub expectation immediately before a behaviour-specific expectation in a test that tests the specific behaviour creates two competing Mockery expectations — the first one always wins, silently defeating the test logic. Use targeted, context-aware edits for test files; reserve `replace_all` for purely mechanical renames.
+
+---
+
+### Challenges
+
+**`expectsOutputToContain` not seeing output when a duplicate Mockery expectation silently short-circuits the lag logic**
+The two new lag tests failed with "Output does not contain 'soft limit'" / "Output does not contain 'hard limit'". The `warn()` messages were correct, but the lag check was never reached because the duplicate `andReturn(0)` expectation returned 0 on the first `readLagKey()` call — below both thresholds — so the command published immediately without printing anything. The symptom looked like an output-capture problem; the root cause was the Mockery ordering issue above. Diagnose by checking `$lagCalls` count before the output assertion — `lagCalls === 0` at that point confirmed the method wasn't being called at all.
+
+---
+
+### Decisions
+
+**`writeLagKey(pendingCount())` unconditionally on every loop iteration, not just after a message is processed**
+The plan said "after each process() + ack() cycle." In the XREADGROUP loop, `readGroup` blocks for up to 5 seconds with no messages if the stream is idle. Calling `writeLagKey(pendingCount())` after the blocking read (with or without a message) means the lag key stays fresh even during idle periods — the TTL doesn't expire and the producer doesn't misread an expired key as zero-lag. This is slightly more Redis traffic than calling only on successful process, but the cost is two round-trips (XPENDING + SET) per loop iteration (every 5s at minimum) — negligible compared to Gemini API calls.
+
+**Soft-limit sleep as a one-shot delay, not a loop**
+When lag exceeds the soft limit, the command sleeps `lag_warn_sleep_ms` (default 500ms) once and continues. An alternative is to sleep and re-check in a loop until lag drops below `lag_warn`. Rejected: a re-check loop is functionally equivalent to moving the soft threshold to the hard-limit branch. A one-shot sleep introduces enough friction to slow the producer without blocking it — the producer may publish one more message at elevated lag, which is acceptable. The hard-limit threshold exists for the "stop until drained" case.
+

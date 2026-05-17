@@ -78,7 +78,7 @@ Delivery count guard: if `delivery-count >= 3`, log a structured `Log::error` an
 
 ---
 
-## Step 3 — Explicit consumer lag signal via Redis key
+## Step 3 — Explicit consumer lag signal via Redis key ✅ Done (2026-05-16)
 
 **Estimate:** 2–3 hours  
 **GitHub issue:** backpressure: explicit consumer lag signal via Redis key  

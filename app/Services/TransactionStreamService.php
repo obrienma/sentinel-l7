@@ -134,4 +134,36 @@ class TransactionStreamService
         // XPENDING (range form) returns [[id, consumer, idle-ms, delivery-count], ...]
         return isset($result[0][3]) ? (int) $result[0][3] : 0;
     }
+
+    /**
+     * Count of unacknowledged messages in the consumer group PEL (XPENDING summary).
+     * More accurate than XLEN: measures work in flight, not stream depth.
+     * Written to sentinel:consumer_lag after every processed message. See ADR-0023.
+     */
+    public function pendingCount(): int
+    {
+        // Summary form: XPENDING <stream> <group> → [total, min-id, max-id, [[consumer, count], ...]]
+        $result = LRedis::executeRaw(['XPENDING', self::STREAM_KEY, self::GROUP]);
+        return isset($result[0]) ? (int) $result[0] : 0;
+    }
+
+    /**
+     * Persist current lag to a short-lived Redis key so the producer can read it.
+     * TTL of 10s ensures the key expires if the worker stops writing (stale lag
+     * is treated as zero by readLagKey).
+     */
+    public function writeLagKey(int $count): void
+    {
+        LRedis::set('sentinel:consumer_lag', $count, 'EX', 10);
+    }
+
+    /**
+     * Read the last-known consumer lag. Returns 0 if the key has expired or was
+     * never set — interpreted as "consumer is not overwhelmed."
+     */
+    public function readLagKey(): int
+    {
+        $val = LRedis::get('sentinel:consumer_lag');
+        return $val !== null ? (int) $val : 0;
+    }
 }

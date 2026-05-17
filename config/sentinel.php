@@ -18,6 +18,11 @@ return [
     'backpressure' => [
         'publish_pause_threshold' => env('SENTINEL_PUBLISH_PAUSE_THRESHOLD', 800),
         'publish_pause_ms'        => env('SENTINEL_PUBLISH_PAUSE_MS', 500),
+        // Graduated lag thresholds (XPENDING count). See ADR-0023.
+        'lag_warn'                => env('SENTINEL_LAG_WARN', 50),
+        'lag_pause'               => env('SENTINEL_LAG_PAUSE', 200),
+        'lag_warn_sleep_ms'       => env('SENTINEL_LAG_WARN_SLEEP_MS', 500),
+        'lag_pause_poll_ms'       => env('SENTINEL_LAG_PAUSE_POLL_MS', 100),
     ],
 
     'reclaim' => [
