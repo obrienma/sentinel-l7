@@ -161,6 +161,7 @@ Create decision logs according to https://martinfowler.com/bliki/ArchitectureDec
 
 ## Claude Code Workflow Notes
 
+- **Never hardcode numeric thresholds or limits** — all tunable numbers (rate limits, timeouts, counts, thresholds) must go in `config/sentinel.php` backed by `env()` so they can be changed without a code deploy.
 - **Work one step at a time** and pause for confirmation before moving to the next build step.
 - **Commit after each logical step** — the user commits manually; don't push. Do provide a commit message for the user.
 - **Don't add features beyond what's asked.** No extra error handling, no extra abstractions, no unrequested refactors. Write todos instead. Note these in suggested commit msg.

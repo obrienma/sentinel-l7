@@ -8,12 +8,12 @@ use Illuminate\Support\Facades\Route;
 
 // Public
 Route::get('/', [HomeController::class, 'index'])->name('home');
-Route::post('/signup', [HomeController::class, 'signup'])->name('signup');
+Route::post('/signup', [HomeController::class, 'signup'])->name('signup')->middleware('throttle:signup');
 
 // Auth
 Route::middleware('guest')->group(function () {
     Route::get('/login', [AuthController::class, 'showLogin'])->name('login');
-    Route::post('/login', [AuthController::class, 'login']);
+    Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:login');
 });
 
 Route::post('/logout', [AuthController::class, 'logout'])->name('logout')->middleware('auth');
@@ -22,6 +22,6 @@ Route::post('/logout', [AuthController::class, 'logout'])->name('logout')->middl
 // TODO: add tenant scoping middleware here when multitenancy is implemented
 Route::middleware('auth')->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
-    Route::post('/dashboard/stream', [DashboardController::class, 'stream'])->name('dashboard.stream');
+    Route::post('/dashboard/stream', [DashboardController::class, 'stream'])->name('dashboard.stream')->middleware('throttle:ai-stream');
     Route::get('/compliance', [ComplianceController::class, 'index'])->name('compliance');
 });

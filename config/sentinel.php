@@ -25,6 +25,12 @@ return [
         'lag_pause_poll_ms'       => env('SENTINEL_LAG_PAUSE_POLL_MS', 100),
     ],
 
+    'rate_limits' => [
+        'login'     => ['attempts' => env('RATE_LIMIT_LOGIN', 5),     'decay' => 'perMinute'],
+        'signup'    => ['attempts' => env('RATE_LIMIT_SIGNUP', 10),   'decay' => 'perHour'],
+        'ai_stream' => ['attempts' => env('RATE_LIMIT_AI_STREAM', 20), 'decay' => 'perMinute'],
+    ],
+
     'reclaim' => [
         // Min idle (ms) before an in-flight message can be stolen by XAUTOCLAIM.
         // See ADR-0022.

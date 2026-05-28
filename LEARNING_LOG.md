@@ -1837,3 +1837,57 @@ The plan said "after each process() + ack() cycle." In the XREADGROUP loop, `rea
 **Soft-limit sleep as a one-shot delay, not a loop**
 When lag exceeds the soft limit, the command sleeps `lag_warn_sleep_ms` (default 500ms) once and continues. An alternative is to sleep and re-check in a loop until lag drops below `lag_warn`. Rejected: a re-check loop is functionally equivalent to moving the soft threshold to the hard-limit branch. A one-shot sleep introduces enough friction to slow the producer without blocking it — the producer may publish one more message at elevated lag, which is acceptable. The hard-limit threshold exists for the "stop until drained" case.
 
+---
+
+## Phase: HTTP Rate Limiting
+*Date: 2026-05-28*
+
+### Summary
+Added named rate limiters to three HTTP endpoints: `POST /login` (5/min per IP), `POST /signup` (10/hr per IP), and `POST /dashboard/stream` (20/min per authenticated user). Limiters registered via `RateLimiter::for()` in `AppServiceProvider::boot()`. Thresholds are config-backed via `config/sentinel.php` and overridable with env vars (`RATE_LIMIT_LOGIN`, `RATE_LIMIT_SIGNUP`, `RATE_LIMIT_AI_STREAM`).
+
+---
+
+### Patterns
+
+**Named rate limiters over inline `throttle:N,M` middleware**
+Laravel's `throttle:5,1` shorthand works but bakes the limit value into the route definition with no way to change it without a code deploy. `RateLimiter::for('name', fn)` centralises the definition in the service provider, accepts a closure that receives the request (enabling per-user keying), and reads from config — all three properties inline `throttle` cannot provide.
+
+**Q:** Why use `RateLimiter::for()` instead of `->middleware('throttle:5,1')` on the route?
+**A:** Inline `throttle:N,M` hardcodes the limit in the route file and can only key on IP. `RateLimiter::for()` accepts a closure with the full request, enabling per-user keying, config-backed values, and a single definition point — changes in one place without touching routes.
+
+---
+
+**User-ID keying for authenticated AI endpoints, IP keying for public auth endpoints**
+Login and signup are unauthenticated — IP is the only available identity. The `/dashboard/stream` endpoint is behind `auth` middleware, so `$request->user()->id` is always available and is a more precise key: one bad actor behind a corporate NAT can't eat the quota of every user on that IP. The `?:` fallback to IP (`$request->user()?->id ?: $request->ip()`) is defensive — in practice the auth middleware guarantees the user exists by the time the limiter fires.
+
+**Q:** Why key the `ai-stream` rate limiter on user ID rather than IP?
+**A:** IP-keyed limits are coarse — all users behind a shared NAT (office, university) share one quota bucket. The `/dashboard/stream` route is auth-gated, so `$request->user()->id` is available and gives each user their own independent quota. This prevents one heavy user from rate-limiting everyone else on the same IP.
+
+---
+
+**Config-backed thresholds in `config/sentinel.php`**
+All numeric limits live in `config/sentinel.php` under `rate_limits`, each backed by an `env()` call. This follows the same convention as `backpressure` and `reclaim` thresholds already in that file — one file is the authoritative source for all tunable numbers in the system. Changing a limit in production requires only an env var update and a process restart, not a code deploy.
+
+**Q:** Where do tunable numeric thresholds live in this project, and why?
+**A:** All tunable numbers — rate limits, backpressure thresholds, reclaim timings — live in `config/sentinel.php` backed by `env()`. This means any value can be changed via an environment variable without touching code or deploying. Hardcoding numbers in service classes or route definitions is prohibited by project convention (CLAUDE.md).
+
+---
+
+### Anti-Patterns
+
+**Hardcoding limit values in the route or service provider**
+`->middleware('throttle:20,1')` on the AI stream route would work at first, but the number becomes invisible — it's buried in a route chain, not searchable as a config key, and requires a deploy to change. Same problem with a literal `20` in the `RateLimiter::for()` closure. Both are prohibited by the project's "no hardcoded numerics" directive.
+
+---
+
+### Challenges
+
+No unexpected obstacles. The only friction was the linter briefly flagging the three new `use` imports as "unnecessary" before the `boot()` method body was written — a false positive from the IDE reading a partially-edited file mid-change.
+
+---
+
+### Decisions
+
+**`perHour` for signup, `perMinute` for login and AI stream**
+Login brute-force operates at sub-minute speed — 5/min is already generous for a legitimate user. Account farming operates at a slower, more sustained rate — 10/hour is tight enough to deter bots while not frustrating a legitimate user who signs up once. The AI stream limit is per-minute because Gemini quota is per-minute at the API level; matching the window to the upstream constraint makes the limit meaningful.
+
