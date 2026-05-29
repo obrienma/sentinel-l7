@@ -1891,3 +1891,49 @@ No unexpected obstacles. The only friction was the linter briefly flagging the t
 **`perHour` for signup, `perMinute` for login and AI stream**
 Login brute-force operates at sub-minute speed — 5/min is already generous for a legitimate user. Account farming operates at a slower, more sustained rate — 10/hour is tight enough to deter bots while not frustrating a legitimate user who signs up once. The AI stream limit is per-minute because Gemini quota is per-minute at the API level; matching the window to the upstream constraint makes the limit meaningful.
 
+---
+
+## Phase: Early-exit idempotency in AxiomProcessorService
+*Date: 2026-05-28*
+
+### Summary
+Added an `EXISTS` check on `source_id` at the top of `AxiomProcessorService::process()`, before any routing decision. A duplicate re-delivery now returns immediately with `risk_level: skipped` — Gemini is never called. The DB-layer `firstOrCreate` + `UniqueConstraintViolationException` catch remains as the concurrent-race fallback for two workers racing on the same message simultaneously.
+
+---
+
+### Patterns
+
+**EXISTS check as the pre-AI dedup gate**
+The DB-layer `firstOrCreate` in `persist()` was already preventing duplicate rows, but it fired *after* the AI call — a re-delivered Axiom above the anomaly threshold would burn a full Gemini embedding + analysis round-trip before the constraint kicked in. Moving the check to the top of `process()` makes dedup the first thing that happens, not an afterthought in the write path.
+
+**Q:** Why isn't the `firstOrCreate` in `persist()` sufficient for idempotency?
+**A:** `firstOrCreate` prevents duplicate *rows*, but it fires after the AI call has already completed. A re-delivered high-score Axiom still pays the Gemini cost. The early `EXISTS` check prevents the AI call from being made at all — it's dedup at the entry point, not at the write point.
+
+---
+
+**Two-layer idempotency: optimistic early-exit + pessimistic DB constraint**
+The `EXISTS` check is the optimistic path — it covers the common case (sequential re-deliveries from stream rewind or at-least-once delivery). The `UniqueConstraintViolationException` catch is the pessimistic path — it covers the race condition where two workers read the same message in the same XAUTOCLAIM window before either has written to Postgres. Both layers are needed; neither alone is sufficient.
+
+**Q:** Why keep the DB-layer `firstOrCreate` after adding the early-exit EXISTS check?
+**A:** The `EXISTS` check has a TOCTOU window: two workers can both read the same unclaimed message, both call `EXISTS` (both get false), both route to AI, and both try to write. The `firstOrCreate` + `UniqueConstraintViolationException` catch handles that race. The early-exit handles the sequential case cheaply; the DB constraint handles the concurrent case safely.
+
+---
+
+### Anti-Patterns
+
+**Relying solely on DB-layer dedup when upstream work is expensive**
+The original code treated idempotency as a persistence concern — just make sure the row isn't duplicated. But the expensive work (Gemini API call) happens before persistence. DB-level dedup is necessary but not sufficient when the operation you're deduplicating is a side-effectful, quota-consuming external call. Dedup must happen before the expensive operation, not after.
+
+---
+
+### Challenges
+
+No unexpected obstacles. The key diagnostic moment was reading the existing test: `->shouldReceive('analyze')->twice()` at line 168 — that line was the clearest evidence that the second delivery was reaching the driver. Changing it to `->once()` was both the fix and the regression test in one.
+
+---
+
+### Decisions
+
+**`risk_level: 'skipped'` as the return value for duplicates, not `'low'` or `null`**
+A duplicate short-circuit is a distinct outcome from a sub-threshold Axiom (`risk_level: 'low'`). Returning `'skipped'` makes the caller's log distinguishable — "this was a known duplicate" vs "this was a low-risk new event." Using `'low'` would conflate two different cases and make operational logs harder to read.
+

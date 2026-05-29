@@ -165,7 +165,7 @@ it('does not create a duplicate event when the same source_id is re-delivered (s
 
 it('does not create a duplicate event when the same source_id is re-delivered (ai-routed)', function () use ($baseAxiom) {
     $driver = Mockery::mock(ComplianceDriver::class);
-    $driver->shouldReceive('analyze')->twice()->andReturn([
+    $driver->shouldReceive('analyze')->once()->andReturn([
         'narrative' => 'Audit.', 'risk_level' => 'high', 'policy_refs' => [], 'confidence' => 0.9,
     ]);
 
@@ -173,6 +173,22 @@ it('does not create a duplicate event when the same source_id is re-delivered (a
     (new AxiomProcessorService($driver))->process($baseAxiom);
 
     expect(ComplianceEvent::count())->toBe(1);
+    Mockery::close();
+});
+
+it('returns risk_level skipped and skips the driver on re-delivery', function () use ($baseAxiom) {
+    $driver = Mockery::mock(ComplianceDriver::class);
+    $driver->shouldReceive('analyze')->once()->andReturn([
+        'narrative' => 'Audit.', 'risk_level' => 'high', 'policy_refs' => [], 'confidence' => 0.9,
+    ]);
+
+    (new AxiomProcessorService($driver))->process($baseAxiom);
+    $result = (new AxiomProcessorService($driver))->process($baseAxiom);
+
+    expect($result['risk_level'])->toBe('skipped')
+        ->and($result['routed_to_ai'])->toBeFalse()
+        ->and($result['narrative'])->toBeNull()
+        ->and($result['source_id'])->toBe('sensor-42');
     Mockery::close();
 });
 

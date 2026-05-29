@@ -45,6 +45,8 @@ The compliance/AML domain gave these problems real shape. The input isn't limite
 - [x] Backpressure step 1 — `XREAD COUNT 1` on transaction stream + `XLEN` producer guard (`sentinel.backpressure.publish_pause_threshold`, default 800) pauses `sentinel:stream` when depth exceeds the threshold
 - [x] Backpressure step 2 — XREADGROUP + XAUTOCLAIM self-healing worker pool (ADR-0022): transaction stream migrated to consumer group `sentinel-consumers`; `XAUTOCLAIM` embedded at the top of each worker loop; dead-letter guard ACKs poison messages at `delivery_count >= 3`; dedicated `sentinel:reclaim-axioms` daemon removed
 - [x] Backpressure step 3 — graduated consumer lag signal (ADR-0023): worker writes `XPENDING` count to `sentinel:consumer_lag` (TTL 10s) after every `readGroup` cycle; producer applies soft-limit sleep (500ms, configurable) at lag > 50, spin-wait at lag > 200
+- [x] HTTP rate limiting — named `RateLimiter::for()` limiters on login (5/min per IP), signup (10/hr per IP), and `/dashboard/stream` (20/min per authenticated user); all thresholds config-backed via `RATE_LIMIT_*` env vars
+- [x] Early-exit idempotency in `AxiomProcessorService` — `EXISTS` check on `source_id` before AI routing; duplicate re-deliveries short-circuit before Gemini is called; DB-layer `firstOrCreate` remains as concurrent-race fallback
 
 ---
 
@@ -333,5 +335,5 @@ php artisan sentinel:reset-metrics
 - **OAuth on the MCP endpoint** — `Mcp::oauthRoutes()` before production agent access
 - **CI pipeline** — architecture tests + unit suite running on every push
 - **Backpressure dashboard** — surface `sentinel:consumer_lag` on the metrics dashboard (step 3 data is written; just needs a UI widget)
-- **End-to-end idempotency audit** — verify EventHorizon event ID flows through Synapse-L4 as `source_id` on the Axiom; add early-exit dedup in `AxiomProcessorService` before the AI call to avoid redundant Gemini spend on duplicate stream entries
+- **End-to-end idempotency audit** — verify EventHorizon event ID flows through Synapse-L4 as `source_id` on the Axiom (early-exit dedup in `AxiomProcessorService` is done; source_id provenance through the full chain is not yet verified)
 

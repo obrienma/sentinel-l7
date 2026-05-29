@@ -38,6 +38,21 @@ class AxiomProcessorService
             ]);
         }
 
+        if ($sourceId !== 'unknown' && ComplianceEvent::where('source_id', $sourceId)->exists()) {
+            Log::info('AxiomProcessorService: duplicate source_id — skipping AI call', [
+                'source_id' => $sourceId,
+            ]);
+
+            return [
+                'source_id'    => $sourceId,
+                'routed_to_ai' => false,
+                'risk_level'   => 'skipped',
+                'narrative'    => null,
+                'domain'       => $domain,
+                'elapsed_ms'   => round((microtime(true) - $start) * 1000, 2),
+            ];
+        }
+
         if ($score > $threshold) {
             return $this->routeToAi($data, $sourceId, $domain, $start);
         }
