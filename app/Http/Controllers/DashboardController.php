@@ -47,13 +47,18 @@ class DashboardController extends Controller
         $threats   = (int) Cache::get('sentinel_metrics_threat_count', 0);
         $total     = $hits + $misses + $fallbacks;
 
+        $lagRaw = Redis::get('sentinel:consumer_lag');
+
         return [
-            'total'     => $total,
-            'hits'      => $hits,
-            'misses'    => $misses,
-            'fallbacks' => $fallbacks,
-            'threats'   => $threats,
-            'hit_rate'  => $total > 0 ? round(($hits / $total) * 100) . '%' : null,
+            'total'        => $total,
+            'hits'         => $hits,
+            'misses'       => $misses,
+            'fallbacks'    => $fallbacks,
+            'threats'      => $threats,
+            'hit_rate'     => $total > 0 ? round(($hits / $total) * 100) . '%' : null,
+            'consumer_lag' => $lagRaw !== null ? (int) $lagRaw : null,
+            'lag_warn'     => config('sentinel.backpressure.lag_warn'),
+            'lag_pause'    => config('sentinel.backpressure.lag_pause'),
         ];
     }
 }

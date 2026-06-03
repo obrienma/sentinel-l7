@@ -1991,3 +1991,49 @@ The export mirrors the page default: the Compliance page opens in flagged-only m
 **Q:** Why does the export default to `flagged=true` rather than exporting everything?
 **A:** The Compliance page default is flagged-only — the export should match what the user is looking at. Defaulting to all events when the UI shows flagged-only creates a silent mismatch between what the user sees and what lands in the file.
 
+---
+
+## Phase: Backpressure dashboard widget
+*Date: 2026-06-03*
+
+### Summary
+Surfaced `sentinel:consumer_lag` on the metrics dashboard as a fourth stat card. The Redis key (plain `SET`, 10s TTL) is already written by the transaction worker on every `readGroup` cycle (ADR-0023). `DashboardController::metrics()` reads it with a plain `Redis::get()` and passes the value alongside the `lag_warn` and `lag_pause` config thresholds. The React `LagCard` component colour-codes the count against those thresholds and shows a dash when the key has expired (worker offline).
+
+---
+
+### Patterns
+
+**Pass config thresholds to the frontend alongside the value they govern**
+Rather than hardcoding `50` and `200` in the React component, `metrics()` passes `lag_warn` and `lag_pause` from `config('sentinel.backpressure.*')`. The widget never knows the raw numbers — it only knows the relationship between the current value and the two thresholds. If the thresholds change in config, the UI colour logic updates automatically without a frontend change.
+
+**Q:** Why pass `lag_warn` and `lag_pause` from the controller rather than hardcoding them in the JSX?
+**A:** Config values can change via env without a code deploy. If the thresholds are hardcoded in JSX they silently diverge from the values the worker is actually using. Passing them from the controller keeps the UI in sync with the operational config.
+
+---
+
+**`null` as the sentinel for "worker is offline"**
+The Redis key has a 10s TTL — it expires when the worker stops writing. A missing key is a meaningful signal ("no worker is running"), distinct from a lag count of `0` ("worker is running and keeping up"). Reading with `Redis::get()` and checking `!== null` preserves that distinction. A `0` default would silently mask an offline worker.
+
+**Q:** Why return `null` for `consumer_lag` when the Redis key is absent, rather than defaulting to `0`?
+**A:** `0` means "worker is running, no backlog." A missing key means "worker is not writing — possibly offline." They are different states. `null` lets the UI render "—" and "worker off" rather than falsely showing a healthy green zero.
+
+---
+
+### Anti-Patterns
+
+**Hardcoding threshold values in the UI component**
+If `50` and `200` were written directly into the JSX colour logic, they'd drift from the values in `config/sentinel.php` the moment someone updates the env vars. UI components that govern operational behaviour must receive their thresholds from the server, not maintain their own copy.
+
+---
+
+### Challenges
+
+No unexpected obstacles. The key was already being written by ADR-0023 work; this phase was purely a read + display path. The only design question was null-vs-zero for an absent key, resolved in favour of `null` to preserve the "worker offline" signal.
+
+---
+
+### Decisions
+
+**4-column grid rather than adding a second row**
+Three stat cards already used `md:grid-cols-3`. Adding a fourth card as a second row would break visual symmetry and bury the lag signal below the fold on smaller screens. Widening to `md:grid-cols-4` keeps all four counters in a single scannable row — appropriate since lag is an operational metric of equal prominence to hit rate.
+

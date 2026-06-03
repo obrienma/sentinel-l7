@@ -7,9 +7,12 @@ import AppLayout from '@/components/AppLayout';
 
 export default function Dashboard({ user, metrics = {}, recentTxns = [], flash = {} }) {
     const {
-        total    = 0,
-        threats  = 0,
-        hit_rate = null,
+        total        = 0,
+        threats      = 0,
+        hit_rate     = null,
+        consumer_lag = null,
+        lag_warn     = 50,
+        lag_pause    = 200,
     } = metrics;
 
     const [streaming, setStreaming] = useState(false);
@@ -52,10 +55,11 @@ export default function Dashboard({ user, metrics = {}, recentTxns = [], flash =
                 <p className="text-emerald-400 text-sm mb-4">{flash.success}</p>
             )}
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
                 <StatCard label="Transactions Processed" value={total || '—'} />
                 <StatCard label="Flags Raised" value={threats || '—'} />
                 <StatCard label="Cache Hit Rate" value={hit_rate ?? '—'} />
+                <LagCard lag={consumer_lag} warn={lag_warn} pause={lag_pause} />
             </div>
 
             <TransactionFeed transactions={recentTxns} />
@@ -75,6 +79,40 @@ function StatCard({ label, value }) {
             </CardHeader>
             <CardContent>
                 <p className="text-4xl font-black">{value}</p>
+            </CardContent>
+        </Card>
+    );
+}
+
+// ── LagCard ───────────────────────────────────────────────────────────────────
+
+function LagCard({ lag, warn, pause }) {
+    let valueClass = 'text-emerald-400';
+    let status     = 'nominal';
+
+    if (lag === null) {
+        valueClass = 'text-slate-500';
+        status     = 'worker off';
+    } else if (lag >= pause) {
+        valueClass = 'text-red-400';
+        status     = 'backpressure';
+    } else if (lag >= warn) {
+        valueClass = 'text-amber-400';
+        status     = 'elevated';
+    }
+
+    return (
+        <Card className="bg-slate-900 border-slate-800 text-white">
+            <CardHeader>
+                <CardTitle className="text-xs uppercase tracking-widest text-slate-500 font-normal">
+                    Consumer Lag
+                </CardTitle>
+            </CardHeader>
+            <CardContent>
+                <p className={`text-4xl font-black ${valueClass}`}>
+                    {lag ?? '—'}
+                </p>
+                <p className="text-xs text-slate-600 mt-1">{status}</p>
             </CardContent>
         </Card>
     );
