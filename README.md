@@ -47,6 +47,7 @@ The compliance/AML domain gave these problems real shape. The input isn't limite
 - [x] Backpressure step 3 — graduated consumer lag signal (ADR-0023): worker writes `XPENDING` count to `sentinel:consumer_lag` (TTL 10s) after every `readGroup` cycle; producer applies soft-limit sleep (500ms, configurable) at lag > 50, spin-wait at lag > 200
 - [x] HTTP rate limiting — named `RateLimiter::for()` limiters on login (5/min per IP), signup (10/hr per IP), and `/dashboard/stream` (20/min per authenticated user); all thresholds config-backed via `RATE_LIMIT_*` env vars
 - [x] Early-exit idempotency in `AxiomProcessorService` — `EXISTS` check on `source_id` before AI routing; duplicate re-deliveries short-circuit before Gemini is called; DB-layer `firstOrCreate` remains as concurrent-race fallback
+- [x] Compliance report CSV export — `GET /compliance/export` streams flagged/all events chunked at 500 rows; optional `from`/`to` date filters; UI date-range picker on the Compliance page
 
 ---
 
@@ -329,7 +330,6 @@ php artisan sentinel:reset-metrics
 
 ## 🗺️ What's still ahead
 
-- **Compliance report export** — CSV/PDF export of flagged events for a date range
 - **EventHorizon deep-link** — `source_id` correlation from compliance event back to the originating EventHorizon event
 - **Silent partial failure alerting** — wire `under_indexed` warnings and `quality_score` logs to an active alert (e.g. N consecutive under-indexed queries on domain X, or `quality_score=0` for N consecutive events)
 - **OAuth on the MCP endpoint** — `Mcp::oauthRoutes()` before production agent access

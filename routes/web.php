@@ -24,4 +24,5 @@ Route::middleware('auth')->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
     Route::post('/dashboard/stream', [DashboardController::class, 'stream'])->name('dashboard.stream')->middleware('throttle:ai-stream');
     Route::get('/compliance', [ComplianceController::class, 'index'])->name('compliance');
+    Route::get('/compliance/export', [ComplianceController::class, 'export'])->name('compliance.export');
 });

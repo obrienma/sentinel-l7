@@ -1937,3 +1937,57 @@ No unexpected obstacles. The key diagnostic moment was reading the existing test
 **`risk_level: 'skipped'` as the return value for duplicates, not `'low'` or `null`**
 A duplicate short-circuit is a distinct outcome from a sub-threshold Axiom (`risk_level: 'low'`). Returning `'skipped'` makes the caller's log distinguishable — "this was a known duplicate" vs "this was a low-risk new event." Using `'low'` would conflate two different cases and make operational logs harder to read.
 
+---
+
+## Phase: Compliance report CSV export
+*Date: 2026-06-03*
+
+### Summary
+Added a `GET /compliance/export` endpoint that streams `compliance_events` rows as a CSV file. The export accepts optional `from`, `to`, and `flagged` query params. Memory pressure is avoided by chunking the query in 500-row batches via `chunk()` into `php://output`. The Compliance page gains an "Export CSV" toggle button that reveals a date-range picker; clicking Download triggers the file via a plain `<a href>` — no Inertia navigation involved.
+
+---
+
+### Patterns
+
+**`response()->streamDownload()` with `chunk()` for large result sets**
+Writing directly to `php://output` inside a `streamDownload` callback avoids loading all matching rows into memory at once. `chunk(500, ...)` pages through the query in batches, flushing each batch to the HTTP response as it goes. This keeps peak memory flat regardless of result count.
+
+**Q:** Why use `streamDownload` + `chunk()` rather than collecting all rows and returning a `Response`?
+**A:** Collecting all rows materialises the full result set in PHP memory before a single byte is sent to the browser. `streamDownload` opens the response pipe immediately; `chunk()` loads 500 rows at a time, writes them, and discards them. Memory stays O(chunk size), not O(result count).
+
+---
+
+**Plain `<a href>` for file downloads, not Inertia `router.get()`**
+File downloads must not go through Inertia's XHR layer — the browser needs to receive the raw `Content-Disposition: attachment` response directly. A plain anchor with a server-built `href` lets the browser handle the download natively. Inertia `router.get()` would intercept the response and try to parse it as a JSON page visit.
+
+**Q:** Why not use Inertia `router.get()` to trigger the CSV download?
+**A:** Inertia wraps navigation in XHR. A streaming `Content-Disposition: attachment` response is opaque to XHR — the browser won't open a save dialog. A plain `<a href>` bypasses Inertia entirely and lets the browser handle the download natively.
+
+---
+
+**Client-side `URLSearchParams` to build a typed query string**
+`new URLSearchParams({ flagged: flaggedOnly ? 1 : 0 })` with conditional `params.set('from', from)` / `params.set('to', to)` produces a clean, encoded query string without string concatenation or null-value leakage. Empty date fields are simply not added to the params object.
+
+---
+
+### Anti-Patterns
+
+**Putting the export route outside the auth middleware group**
+The export endpoint reads potentially sensitive compliance narrative text. It must sit inside the same `auth` + `verified` middleware group as the rest of the compliance routes. Adding it outside (e.g. as a top-level public route) would expose flagged transaction narratives to unauthenticated callers.
+
+---
+
+### Challenges
+
+No unexpected obstacles. The only design question was whether to drive the download through Inertia or a plain link — the correct answer (plain `<a href>`) is non-obvious to developers who default to Inertia for all navigation, which is why it's recorded here.
+
+---
+
+### Decisions
+
+**Flagged-only as the default export filter (`flagged=true` when omitted)**
+The export mirrors the page default: the Compliance page opens in flagged-only mode, so the export should default to the same view. Exporting all events by default when the page shows flagged-only would be a surprise mismatch for the user.
+
+**Q:** Why does the export default to `flagged=true` rather than exporting everything?
+**A:** The Compliance page default is flagged-only — the export should match what the user is looking at. Defaulting to all events when the UI shows flagged-only creates a silent mismatch between what the user sees and what lands in the file.
+

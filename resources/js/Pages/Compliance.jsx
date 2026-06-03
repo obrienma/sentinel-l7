@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Head, router, usePage } from '@inertiajs/react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -6,7 +6,10 @@ import { Button } from '@/components/ui/button';
 import AppLayout from '@/components/AppLayout';
 
 export default function Compliance({ user, events, flaggedOnly }) {
-    // Auto-refresh the event list every 5 seconds.
+    const [showExport, setShowExport] = useState(false);
+    const [from, setFrom] = useState('');
+    const [to, setTo] = useState('');
+
     useEffect(() => {
         const id = setInterval(() => {
             router.reload({ only: ['events'] });
@@ -22,25 +25,70 @@ export default function Compliance({ user, events, flaggedOnly }) {
         if (url) router.get(url, {}, { preserveScroll: true });
     }
 
+    function buildExportUrl() {
+        const params = new URLSearchParams({ flagged: flaggedOnly ? 1 : 0 });
+        if (from) params.set('from', from);
+        if (to) params.set('to', to);
+        return `/compliance/export?${params.toString()}`;
+    }
+
     return (
         <AppLayout user={user}>
             <Head title="Compliance Events" />
 
-            <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center justify-between mb-4">
                 <div>
                     <h2 className="text-2xl font-bold">Compliance Events</h2>
                     <p className="text-slate-400 text-sm mt-1">
                         Axiom-ingested events from the Synapse-L4 pipeline
                     </p>
                 </div>
-                <Button
-                    onClick={toggleFilter}
-                    variant="outline"
-                    className="border-slate-700 text-slate-300 hover:text-white hover:bg-slate-800"
-                >
-                    {flaggedOnly ? 'Show All Events' : 'Show Flagged Only'}
-                </Button>
+                <div className="flex items-center gap-2">
+                    <Button
+                        onClick={() => setShowExport(v => !v)}
+                        variant="outline"
+                        className="border-slate-700 text-slate-300 hover:text-white hover:bg-slate-800"
+                    >
+                        Export CSV
+                    </Button>
+                    <Button
+                        onClick={toggleFilter}
+                        variant="outline"
+                        className="border-slate-700 text-slate-300 hover:text-white hover:bg-slate-800"
+                    >
+                        {flaggedOnly ? 'Show All Events' : 'Show Flagged Only'}
+                    </Button>
+                </div>
             </div>
+
+            {showExport && (
+                <div className="flex items-end gap-3 mb-6 p-4 rounded-lg bg-slate-900 border border-slate-800">
+                    <div className="flex flex-col gap-1">
+                        <label className="text-xs text-slate-500 uppercase tracking-wider">From</label>
+                        <input
+                            type="date"
+                            value={from}
+                            onChange={e => setFrom(e.target.value)}
+                            className="bg-slate-800 border border-slate-700 text-slate-200 text-sm rounded px-3 py-1.5 focus:outline-none focus:border-slate-500"
+                        />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                        <label className="text-xs text-slate-500 uppercase tracking-wider">To</label>
+                        <input
+                            type="date"
+                            value={to}
+                            onChange={e => setTo(e.target.value)}
+                            className="bg-slate-800 border border-slate-700 text-slate-200 text-sm rounded px-3 py-1.5 focus:outline-none focus:border-slate-500"
+                        />
+                    </div>
+                    <a
+                        href={buildExportUrl()}
+                        className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm transition-colors"
+                    >
+                        ↓ Download
+                    </a>
+                </div>
+            )}
 
             <EventFeed events={events} flaggedOnly={flaggedOnly} onPageChange={goToPage} />
         </AppLayout>
