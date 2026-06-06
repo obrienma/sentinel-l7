@@ -8,6 +8,7 @@ uses(Tests\TestCase::class, RefreshDatabase::class);
 
 beforeEach(function () {
     Redis::shouldReceive('executeRaw')->andReturn([]);
+    Redis::shouldReceive('get')->andReturn(null);
 });
 
 // ─── Login page ───────────────────────────────────────────────────────────────
