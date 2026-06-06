@@ -1,0 +1,1 @@
+Sentinel-L7 OTel instrumentation complete. OtelServiceProvider bootstraps SDK (BatchSpanProcessor → OTLP HTTP → collector). AxiomProcessorService wraps process(), routeToAi(), and recordSubThreshold() in wide spans. traceparent extracted from Redis Stream entries and used to continue the Synapse-L4 trace as a child span. 45 tests pass.

@@ -49,6 +49,7 @@ The compliance/AML domain gave these problems real shape. The input isn't limite
 - [x] Early-exit idempotency in `AxiomProcessorService` — `EXISTS` check on `source_id` before AI routing; duplicate re-deliveries short-circuit before Gemini is called; DB-layer `firstOrCreate` remains as concurrent-race fallback
 - [x] Compliance report CSV export — `GET /compliance/export` streams flagged/all events chunked at 500 rows; optional `from`/`to` date filters; UI date-range picker on the Compliance page
 - [x] Backpressure dashboard widget — consumer lag stat card reads `sentinel:consumer_lag` (10s TTL); colour-coded emerald/amber/red against `lag_warn`/`lag_pause` config thresholds; dash when worker is offline
+- [x] OTel instrumentation (Phase 2) — `OtelServiceProvider` bootstraps SDK (BatchSpanProcessor → OTLP HTTP); `AxiomProcessorService` wraps processing in wide spans with `source_id`, `anomaly_score`, `domain`, `routed_to_ai` attributes; `traceparent` extracted from stream entries to continue Synapse-L4 trace as child span (ADR-0024)
 
 ---
 
@@ -331,6 +332,7 @@ php artisan sentinel:reset-metrics
 
 ## 🗺️ What's still ahead
 
+- **OTel Phase 3** — EventHorizon instrumentation (four-stage RabbitMQ trace, malformed-message span events)
 - **EventHorizon deep-link** — `source_id` correlation from compliance event back to the originating EventHorizon event
 - **Silent partial failure alerting** — wire `under_indexed` warnings and `quality_score` logs to an active alert (e.g. N consecutive under-indexed queries on domain X, or `quality_score=0` for N consecutive events)
 - **OAuth on the MCP endpoint** — `Mcp::oauthRoutes()` before production agent access

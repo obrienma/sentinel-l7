@@ -28,7 +28,7 @@ function fakeAxiomMessage(array $overrides = []): array
 }
 
 /**
- * Build a parsed associative array from fakeAxiomMessage's flat payload,
+ * Build a parsed result from fakeAxiomMessage's flat payload,
  * mirroring what AxiomStreamService::parseFields() would return.
  */
 function parseFakeAxiomFlat(array $flat): array
@@ -44,7 +44,7 @@ function parseFakeAxiomFlat(array $flat): array
         $data['metric_value'] = (float) $data['metric_value'];
     }
 
-    return $data;
+    return ['fields' => $data, 'traceparent' => null];
 }
 
 function mockAxiomStreamWithOneMessage(array $overrides = []): \Mockery\MockInterface

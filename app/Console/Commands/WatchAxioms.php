@@ -56,7 +56,9 @@ class WatchAxioms extends Command
 
     private function processMessage(array $streamMsg, AxiomStreamService $stream, AxiomProcessorService $processor): void
     {
-        $data = $stream->parseFields($streamMsg[1]);
+        $parsed      = $stream->parseFields($streamMsg[1]);
+        $data        = $parsed['fields'];
+        $traceparent = $parsed['traceparent'];
 
         $sourceId = $data['source_id']     ?? '?';
         $score    = $data['anomaly_score'] ?? '?';
@@ -66,7 +68,7 @@ class WatchAxioms extends Command
         $this->line("<fg=blue>──── AXIOM {$sourceId}</>");
         $this->line("<fg=blue>     status={$status} | score={$score}</>");
 
-        $outcome = $processor->process($data);
+        $outcome = $processor->process($data, $traceparent);
 
         if ($outcome['routed_to_ai']) {
             $this->line("<fg=yellow>🤖 AI [{$outcome['elapsed_ms']}ms] risk={$outcome['risk_level']}</>");

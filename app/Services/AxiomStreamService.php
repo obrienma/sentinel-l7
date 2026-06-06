@@ -91,8 +91,11 @@ class AxiomStreamService
     }
 
     /**
-     * Parse the flat [field, value, field, value, ...] list returned by Redis
-     * into an associative array, casting numeric Axiom fields.
+     * Parse the flat [field, value, field, value, ...] list returned by Redis.
+     * Returns Axiom fields separately from the transport-layer traceparent header
+     * so callers can propagate trace context without it leaking into domain data.
+     *
+     * @return array{fields: array, traceparent: string|null}
      */
     public function parseFields(array $flat): array
     {
@@ -101,6 +104,9 @@ class AxiomStreamService
             $data[$flat[$i]] = $flat[$i + 1];
         }
 
+        $traceparent = $data['traceparent'] ?? null;
+        unset($data['traceparent']);
+
         if (array_key_exists('anomaly_score', $data)) {
             $data['anomaly_score'] = (float) $data['anomaly_score'];
         }
@@ -108,7 +114,7 @@ class AxiomStreamService
             $data['metric_value'] = (float) $data['metric_value'];
         }
 
-        return $data;
+        return ['fields' => $data, 'traceparent' => $traceparent];
     }
 
     /**

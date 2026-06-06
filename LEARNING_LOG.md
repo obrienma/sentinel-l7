@@ -2103,3 +2103,75 @@ The low quality counter needed amber colouring when non-zero. Options: (1) a new
 **Q:** Why add a `valueClass` prop to `StatCard` rather than creating an `AlertStatCard`?
 **A:** One new use case doesn't justify a new component. A new component would duplicate `StatCard`'s markup and add a naming decision with no reuse benefit. The optional `valueClass` prop extends the existing component minimally — callers opt into colour overrides without changing the component's core behaviour. If more cards need conditional colouring, the pattern is already established.
 
+---
+
+## Phase: OTel observability — Sentinel-L7 instrumentation (Phase 2)
+*Date: 2026-06-06*
+
+### Summary
+Instrumented the Axiom processing pipeline with OpenTelemetry. Installed `open-telemetry/sdk` (1.14.0) and `open-telemetry/exporter-otlp` (1.4.0). Added `OtelServiceProvider` (SDK bootstrap), `TraceContextExtractor` (W3C context extraction), and `config/otel.php`. Modified `AxiomStreamService::parseFields()` to return `{fields, traceparent}` instead of a flat array. Modified `AxiomProcessorService::process()` to accept `?string $traceparent`, start a root `axiom.process` span as a child of the incoming trace, and nest `axiom.ai_analysis` and `axiom.sub_threshold` child spans with wide attributes. All 45 existing tests pass unchanged.
+
+---
+
+### Patterns
+
+**`new X()` as a constructor parameter default (PHP 8.1+ "new in initializers")**
+`AxiomProcessorService` takes `TraceContextExtractor $extractor = new TraceContextExtractor()` as a constructor parameter default. This lets existing unit tests that do `new AxiomProcessorService($driver)` keep working without modification — the extractor is auto-supplied. Laravel DI ignores the default and injects from the container in production.
+
+**Q:** Why use `new TraceContextExtractor()` as a default parameter value rather than always injecting it?
+**A:** The extractor has no external dependencies and no state — it's a pure function wrapper around the OTel propagator. Letting it default means the service is directly instantiable in unit tests without a DI container. Production code still gets injection (and could swap the extractor if needed). The default is a convenience for test authors, not a design shortcut.
+
+---
+
+**Optional tracer provider with `Globals::tracerProvider()` fallback**
+The tracer provider is an optional constructor parameter. When `null` (tests instantiating directly), the constructor falls back to `Globals::tracerProvider()`, which returns a `NoopTracerProvider` if the SDK isn't bootstrapped. All span operations become no-ops. In production, Laravel DI injects the real `TracerProviderInterface` singleton registered by `OtelServiceProvider`.
+
+**Q:** What does `Globals::tracerProvider()` return when the OTel SDK hasn't been configured?
+**A:** It returns `NoopTracerProvider`, which produces `NoopTracer`, which produces `NoopSpan`. Every span operation (setAttribute, activate, end) is a no-op. This is the standard OTel PHP design — the API package is always safe to use, even without the SDK installed.
+
+---
+
+**Wide spans over pre-aggregated counters**
+Every business attribute the processor knows about at processing time — `source_id`, `anomaly_score`, `metric_value`, `domain`, `status`, `threshold`, `is_duplicate`, `routed_to_ai`, `risk_level`, `elapsed_ms`, `ai.driver`, `ai.confidence`, `ai.policy_refs`, `ai.narrative_length` — goes on spans as attributes. No new Prometheus counters were created. This follows the architectural posture from the migration plan: Prometheus counters are for alerting signals; everything analytics-shaped is queryable via TraceQL.
+
+**Q:** What's the difference between putting data on a span attribute vs. a Prometheus counter?
+**A:** A Prometheus counter pre-aggregates data into a label dimension at write time. Once written, you can only query along dimensions you predicted in advance. A span attribute is high-cardinality — you can group, filter, and histogram on any attribute at query time in Tempo. The tradeoff is cost at scale (Tempo must store all the data), but for a portfolio project the wide-span model is strictly better: it's more expressive and models what you'd build at a company running Datadog or Honeycomb.
+
+---
+
+**Separate return field vs. embedded in domain data (`traceparent` isolation)**
+`parseFields()` returns `{fields: {...}, traceparent: string|null}` rather than including `traceparent` in the flat fields dict. The caller (`WatchAxioms`) destructures and passes traceparent only to `process()`. It never appears in the Axiom payload, the ComplianceEvent model, or any log. See ADR-0024.
+
+---
+
+### Anti-Patterns
+
+**Persisting trace IDs in the domain model**
+`traceparent` was explicitly excluded from `ComplianceEvent`. Trace IDs are ephemeral — they're scoped to a single pipeline run and meaningless after the trace expires from Tempo. Storing them in the audit table conflates observability infrastructure with compliance records. A compliance record is permanent; a trace ID rotates per run.
+
+**Q:** Why shouldn't `traceparent` be stored on `ComplianceEvent`?
+**A:** Compliance events are audit records — they persist indefinitely and represent business facts. Trace context is observability infrastructure — ephemeral, scoped to one execution, and meaningless after the trace window closes. Mixing them makes the domain model carry a transport concern. If you later want to correlate a compliance event to a trace, store the `trace_id` explicitly as a separate column with a clear meaning — not the raw W3C header.
+
+---
+
+### Challenges
+
+**PHP OTel class discovery** — Before writing any code, spent time verifying the actual class paths from the installed package files (`find vendor/open-telemetry -name "*.php"`). The PHP OTel ecosystem has several sub-packages (`api`, `sdk`, `sem-conv`, `exporter-otlp`) with different namespaces (`OpenTelemetry\API`, `OpenTelemetry\SDK`, `OpenTelemetry\Contrib\Otlp`, `OpenTelemetry\SemConv`). Working from documentation memory risks wrong namespace prefixes. Reading the installed vendor files directly was more reliable.
+
+**`sem-conv` "archived" notice** — The `ResourceAttributes.php` file in `open-telemetry/sem-conv` includes the comment "DO NOT EDIT, this is archived and left for backward compatibility." This is confusing — it's still the correct file to use (namespace `OpenTelemetry\SemConv`, constant `SERVICE_NAME = 'service.name'`). The note refers to the generated nature of the file, not its deprecation.
+
+**Test backward compatibility with signature change** — Changing `parseFields()` return shape (flat array → `{fields, traceparent}`) required updating the `parseFakeAxiomFlat()` helper in `WatchAxiomsTest.php` to match. The key insight: the helper function is the single point of truth for the mock return value; updating it updates all test cases that depend on it. No individual test cases needed changing.
+
+---
+
+### Decisions
+
+**`BatchSpanProcessor` over `SimpleSpanProcessor`**
+`SimpleSpanProcessor` exports each span synchronously as it ends — the worker loop would block on every OTLP HTTP request. `BatchSpanProcessor` exports asynchronously on a timer (default 5s) and on queue fill. For a long-running Artisan worker, batching is strictly better: no per-span blocking. Downside: spans not yet exported are lost if the process is killed without a `shutdown()` call. Acceptable for a dev/portfolio setup; would add PCNTL signal handler for production.
+
+**Q:** Why use `BatchSpanProcessor` and not `SimpleSpanProcessor`?
+**A:** `SimpleSpanProcessor` calls the exporter synchronously on every `span->end()`. In a stream worker where each message might produce 2–3 spans, that's 2–3 synchronous HTTP calls per message, adding 10–50ms per message to the processing loop. `BatchSpanProcessor` defers export and batches multiple spans in one HTTP request, keeping the hot path clean. The only cost is potential span loss on unclean shutdown — solvable with a PCNTL signal handler.
+
+**`new in initializers` for `TraceContextExtractor` default over a null check**
+Alternative: accept `?TraceContextExtractor $extractor = null` and add `$this->extractor = $extractor ?? new TraceContextExtractor()` in the constructor body. The `= new TraceContextExtractor()` default is cleaner — it's visible at the call site, makes the type non-nullable (no `?` at the property level), and PHP 8.1+ supports it without any caveats on PHP 8.4.
+

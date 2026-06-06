@@ -197,16 +197,25 @@ it('parses a flat field-value list into an associative array', function () {
     $flat   = ['status', 'critical', 'source_id', 'sensor-42', 'anomaly_score', '0.91', 'metric_value', '94.0'];
     $result = (new AxiomStreamService())->parseFields($flat);
 
-    expect($result['status'])->toBe('critical')
-        ->and($result['source_id'])->toBe('sensor-42')
-        ->and($result['anomaly_score'])->toBe(0.91)
-        ->and($result['metric_value'])->toBe(94.0);
+    expect($result['fields']['status'])->toBe('critical')
+        ->and($result['fields']['source_id'])->toBe('sensor-42')
+        ->and($result['fields']['anomaly_score'])->toBe(0.91)
+        ->and($result['fields']['metric_value'])->toBe(94.0)
+        ->and($result['traceparent'])->toBeNull();
 });
 
 it('casts anomaly_score and metric_value to float', function () {
     $flat   = ['anomaly_score', '0.75', 'metric_value', '50'];
     $result = (new AxiomStreamService())->parseFields($flat);
 
-    expect($result['anomaly_score'])->toBeFloat()->toBe(0.75)
-        ->and($result['metric_value'])->toBeFloat()->toBe(50.0);
+    expect($result['fields']['anomaly_score'])->toBeFloat()->toBe(0.75)
+        ->and($result['fields']['metric_value'])->toBeFloat()->toBe(50.0);
+});
+
+it('surfaces traceparent separately from axiom fields', function () {
+    $flat   = ['source_id', 'sensor-1', 'traceparent', '00-aabbcc-11223344-01'];
+    $result = (new AxiomStreamService())->parseFields($flat);
+
+    expect($result['traceparent'])->toBe('00-aabbcc-11223344-01')
+        ->and(array_key_exists('traceparent', $result['fields']))->toBeFalse();
 });
