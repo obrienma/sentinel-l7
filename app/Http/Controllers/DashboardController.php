@@ -41,11 +41,12 @@ class DashboardController extends Controller
 
     private function metrics(): array
     {
-        $hits      = (int) Cache::get('sentinel_metrics_cache_hit_count', 0);
-        $misses    = (int) Cache::get('sentinel_metrics_cache_miss_count', 0);
-        $fallbacks = (int) Cache::get('sentinel_metrics_fallback_count', 0);
-        $threats   = (int) Cache::get('sentinel_metrics_threat_count', 0);
-        $total     = $hits + $misses + $fallbacks;
+        $hits       = (int) Cache::get('sentinel_metrics_cache_hit_count', 0);
+        $misses     = (int) Cache::get('sentinel_metrics_cache_miss_count', 0);
+        $fallbacks  = (int) Cache::get('sentinel_metrics_fallback_count', 0);
+        $threats    = (int) Cache::get('sentinel_metrics_threat_count', 0);
+        $lowQuality = (int) Cache::get('sentinel_metrics_low_quality_count', 0);
+        $total      = $hits + $misses + $fallbacks;
 
         $lagRaw = Redis::get('sentinel:consumer_lag');
 
@@ -55,6 +56,7 @@ class DashboardController extends Controller
             'misses'       => $misses,
             'fallbacks'    => $fallbacks,
             'threats'      => $threats,
+            'low_quality'  => $lowQuality,
             'hit_rate'     => $total > 0 ? round(($hits / $total) * 100) . '%' : null,
             'consumer_lag' => $lagRaw !== null ? (int) $lagRaw : null,
             'lag_warn'     => config('sentinel.backpressure.lag_warn'),

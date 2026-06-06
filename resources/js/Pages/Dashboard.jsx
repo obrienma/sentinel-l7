@@ -9,6 +9,7 @@ export default function Dashboard({ user, metrics = {}, recentTxns = [], flash =
     const {
         total        = 0,
         threats      = 0,
+        low_quality  = 0,
         hit_rate     = null,
         consumer_lag = null,
         lag_warn     = 50,
@@ -55,10 +56,15 @@ export default function Dashboard({ user, metrics = {}, recentTxns = [], flash =
                 <p className="text-emerald-400 text-sm mb-4">{flash.success}</p>
             )}
 
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-8">
                 <StatCard label="Transactions Processed" value={total || '—'} />
                 <StatCard label="Flags Raised" value={threats || '—'} />
                 <StatCard label="Cache Hit Rate" value={hit_rate ?? '—'} />
+                <StatCard
+                    label="Low Quality Alerts"
+                    value={low_quality || '—'}
+                    valueClass={low_quality > 0 ? 'text-amber-400' : undefined}
+                />
                 <LagCard lag={consumer_lag} warn={lag_warn} pause={lag_pause} />
             </div>
 
@@ -69,7 +75,7 @@ export default function Dashboard({ user, metrics = {}, recentTxns = [], flash =
 
 // ── StatCard ──────────────────────────────────────────────────────────────────
 
-function StatCard({ label, value }) {
+function StatCard({ label, value, valueClass }) {
     return (
         <Card className="bg-slate-900 border-slate-800 text-white">
             <CardHeader>
@@ -78,7 +84,7 @@ function StatCard({ label, value }) {
                 </CardTitle>
             </CardHeader>
             <CardContent>
-                <p className="text-4xl font-black">{value}</p>
+                <p className={`text-4xl font-black ${valueClass ?? ''}`}>{value}</p>
             </CardContent>
         </Card>
     );

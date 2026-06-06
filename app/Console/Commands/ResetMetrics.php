@@ -20,6 +20,7 @@ class ResetMetrics extends Command
             Cache::forget("sentinel_metrics_{$key}_time");
         }
         Cache::forget('sentinel_metrics_threat_count');
+        Cache::forget('sentinel_metrics_low_quality_count');
 
         $this->info('Metrics reset.');
     }

@@ -2037,3 +2037,69 @@ No unexpected obstacles. The key was already being written by ADR-0023 work; thi
 **4-column grid rather than adding a second row**
 Three stat cards already used `md:grid-cols-3`. Adding a fourth card as a second row would break visual symmetry and bury the lag signal below the fold on smaller screens. Widening to `md:grid-cols-4` keeps all four counters in a single scannable row — appropriate since lag is an operational metric of equal prominence to hit rate.
 
+---
+
+## Phase: Blog posts #06–#10 + low quality observability metric
+*Date: 2026-06-05*
+
+### Summary
+Wrote five blog post drafts (`blog/06` through `blog/10`) covering the delivery receipt on the #05 roadmap and a four-part "Sentinel-L7 Systems Patterns" mini-series (XAUTOCLAIM self-healing, graduated backpressure, domain RAG + quality scoring, triple-defense idempotency). Generated 27 Anki cards across `Sentinel-L7::Tech` and `Sentinel-L7::Architecture` decks. Added `sentinel_metrics_low_quality_count` — a Cache counter incremented by both compliance drivers when `quality_score <= 1` — surfaced on the dashboard as an amber-coloured stat card.
+
+---
+
+### Patterns
+
+**Lead with the failure mode, then the solution**
+Every blog post opens by describing what breaks before describing how it's fixed. This is the same structure as the learning log's Anti-Pattern sections and the CLAUDE.md mentorship protocol. It forces the writer to understand *why* a pattern exists before explaining *what* it does — and it gives readers the context needed to judge whether the pattern applies to their own situation.
+
+**Q:** Why structure a technical post as "failure first, solution second"?
+**A:** If you lead with the solution, readers don't know what problem it solves. Leading with the failure mode establishes the stakes and makes the solution legible. It also forces the author to confirm they actually understand the failure — you can't describe it clearly if you don't.
+
+---
+
+**`Cache::increment` alongside `Log::warning` for countable alert conditions**
+When a warning log represents a countable recurring event (not just a one-off error), incrementing a `sentinel_metrics_*` counter at the same point gives the event a presence on the dashboard without requiring a schema migration or extra infrastructure. The log provides the detail; the counter provides the trend signal.
+
+**Q:** Why increment a Cache counter in addition to logging a warning, rather than just relying on the log?
+**A:** A log entry is point-in-time and requires a query to aggregate. A counter is immediately visible on the dashboard and answers "how many times has this happened since last reset?" at a glance. Both are useful: the counter surfaces the trend; the log contains the diagnostic context (source_id, domain, individual signal values).
+
+---
+
+**Pass config thresholds to the frontend rather than duplicating them in JSX**
+The `low_quality` card uses a threshold of `> 0` (not a config value), but the pattern established by `LagCard` — receiving `lag_warn` and `lag_pause` from the controller rather than hardcoding them — applies whenever a UI component makes a decision based on an operationally configurable threshold.
+
+---
+
+### Anti-Patterns
+
+**Warning logs with no downstream hook**
+Before this phase, the system had ~20 `Log::warning` and `Log::error` calls with no aggregation, counter, or alert wired to any of them. A warning log that nobody reads is not observability — it's an audit trail for post-incident review at best. The first step to real alerting is making the signal countable and visible. `sentinel_metrics_low_quality_count` closes this for one class of AI degradation.
+
+**Q:** What is the risk of having warning logs with no downstream alert hook?
+**A:** Degradation is only detectable in retrospect — after someone manually queries the logs or the problem surfaces through another channel (user complaint, wrong audit outcome). The warning log's value is in catching degradation *early*, which requires something watching it in near-real-time.
+
+---
+
+**Documenting shipped features without a delivery receipt post**
+The Systems Patterns series (#07–#10) covers work that shipped weeks before the posts were written. Without post #06 ("what we actually shipped") as an anchor, readers of #05 ("what comes next") have no confirmation that the promised features landed. A delivery receipt post closes the reader's loop and establishes trust before the deeper technical posts begin.
+
+---
+
+### Challenges
+
+**Backdating blog posts consistently**
+Posts needed dates that reflected when the features shipped, not when the posts were written. With five posts and multiple features per post, the dates needed to form a coherent timeline: #05 (Apr 30) → #07 (May 19, after XAUTOCLAIM shipped May 16) → #08 (May 26) → #09 (Jun 2) → #10 (Jun 3) → #06 delivery receipt (Jun 4). The challenge was resisting the temptation to cluster all posts near today's date — spacing them to reflect the actual development timeline makes the series read as a contemporaneous record rather than a retrospective.
+
+---
+
+### Decisions
+
+**Series header + next/prev links on #07–#10, standalone for #06**
+Posts #07–#10 are branded "Sentinel-L7 Systems Patterns" with explicit series navigation. Post #06 is a standalone delivery receipt that points forward to the series. This avoids making #06 feel like "Part 0" of a series about systems patterns when its actual purpose is different (roadmap closure). Readers arriving at any individual systems post can follow the series; readers arriving at #06 get the context they need without being dropped mid-series.
+
+**`valueClass` prop on `StatCard` rather than a new component**
+The low quality counter needed amber colouring when non-zero. Options: (1) a new `AlertStatCard` component, (2) a `warn` boolean prop, (3) an optional `valueClass` string prop. A `valueClass` prop is the most general — it passes the colour decision to the caller without baking in "amber means warning" as a component assumption. A new component would be premature for one use case; a `warn` boolean would hardcode the amber colour inside the component.
+
+**Q:** Why add a `valueClass` prop to `StatCard` rather than creating an `AlertStatCard`?
+**A:** One new use case doesn't justify a new component. A new component would duplicate `StatCard`'s markup and add a naming decision with no reuse benefit. The optional `valueClass` prop extends the existing component minimally — callers opt into colour overrides without changing the component's core behaviour. If more cards need conditional colouring, the pattern is already established.
+

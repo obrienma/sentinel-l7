@@ -5,6 +5,7 @@ namespace App\Services\Compliance;
 use App\Contracts\ComplianceDriver;
 use App\Services\EmbeddingService;
 use App\Services\VectorCacheService;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -169,6 +170,7 @@ class GeminiDriver implements ComplianceDriver
 
         if ($qualityScore <= self::QUALITY_WARNING_THRESHOLD) {
             Log::warning('GeminiDriver: low quality score', $context);
+            Cache::increment('sentinel_metrics_low_quality_count');
         }
     }
 
