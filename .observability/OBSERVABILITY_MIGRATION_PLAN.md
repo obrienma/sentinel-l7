@@ -1,7 +1,7 @@
 # OTel Observability Migration — Cross-Service Plan
 
 **Audience:** implementation agent (Claude Code or similar)
-**Drop location:** copy this file to the root of each of the four repos as `OBSERVABILITY_MIGRATION_PLAN.md`
+**Drop location:** copy this file to the root of each of the four repos as `.observability/OBSERVABILITY_MIGRATION_PLAN.md`
 **Source of truth:** this plan is ordered across four repos. The phase you can work on depends on which repo you are in AND which prior phases are complete. **Do not skip ahead. Pause checkpoints are mandatory.**
 
 ---
