@@ -49,3 +49,16 @@ to return {{c2::N-1 failure}} responses followed by a {{c3::success}} response
 
 Extra: sentinel-l7 · Phase 4 · Challenge: Testing Retries Without Real Sleep
 See: docs/journal.md#phase-4
+
+---
+type: cloze
+deck: Rhizome::sentinel-l7
+tags: [sentinel-l7, phase-4, vector-cache]
+---
+`VectorCacheService::delete()` was added during hardening with
+{{c1::no current caller}}, because cache invalidation on a {{c2::compliance
+policy change}} requires evicting every cached verdict under the old policy —
+deferring it would block that future work entirely.
+
+Extra: sentinel-l7 · Phase 4 · Decision: Speculative VectorCacheService::delete()
+See: docs/journal.md#phase-4
