@@ -3,6 +3,7 @@
 Stories are organised by domain. Each story is marked:
 - ✅ **Implemented** — delivered in the current codebase
 - 🔲 **Aspirational** — not yet built; a TODO exists in README and CLAUDE.md
+- 🚫 **Deferred** — explicitly out of scope for this project; see the linked ADR
 
 ---
 
@@ -43,10 +44,10 @@ Stories are organised by domain. Each story is marked:
 
 ---
 
-### 🔲 🕵️ Scope transaction data by tenant
+### 🚫 🕵️ Scope transaction data by tenant
 > As a compliance operator at a multi-tenant platform, I want my team's transactions isolated from other tenants, so that I only see data that belongs to my organisation.
 
-*TODO:* Tenant-scoping middleware on the `auth` route group (`routes/web.php` has a placeholder comment); `XADD` stream key needs tenant prefix
+*Deferred:* See ADR-0020 — multi-tenancy and RBAC are being built in `rhizo-book` (TypeScript/WorkOS) instead, not planned for Sentinel-L7. The `routes/web.php` placeholder comment remains as an honest marker of known scope.
 
 ---
 
@@ -57,10 +58,10 @@ Stories are organised by domain. Each story is marked:
 
 ---
 
-### 🔲 🕵️ Configure risk thresholds per tenant
+### 🚫 🕵️ Configure risk thresholds per tenant
 > As a compliance operator, I want to set the anomaly score threshold that triggers AI analysis for my tenant, so that high-sensitivity environments can flag more events without changing the platform default.
 
-*TODO:* Per-tenant threshold config — currently a single `sentinel.axiom_threshold` value in `config/sentinel.php`
+*Deferred:* See ADR-0020 — per-tenant configuration depends on the tenant data model that was descoped from Sentinel-L7; not planned here. `config/sentinel.php` keeps a single platform-wide `sentinel.axiom_threshold`.
 
 ---
 
@@ -132,10 +133,25 @@ Stories are organised by domain. Each story is marked:
 
 ---
 
-### 🔲 🛠️ Export a compliance report
+### ✅ 🛠️ Export a compliance report
 > As a platform engineer, I want to export flagged compliance events as CSV or PDF for a given date range, so that I can send a compliance report to auditors without granting them dashboard access.
 
-*TODO:* No export endpoint exists; requires a controller action and a queue job for large exports
+*Delivered by:* `GET /compliance/export` — `streamDownload()` + `chunk(500)` CSV export with `from`/`to`/`flagged` filters; "Export CSV" toggle and date-range picker on the Compliance page
+*TODO:* PDF export not yet implemented
+
+---
+
+### ✅ 🛠️ Detect a stalled or overwhelmed worker before the stream backs up
+> As a platform engineer, I want to see the consumer lag for the transaction stream on the dashboard, so that I can tell whether the worker is keeping up before messages pile up unbounded.
+
+*Delivered by:* `sentinel:consumer_lag` (plain `SET`, 10s TTL, written by the worker each `readGroup` cycle per ADR-0023) surfaced via `DashboardController::metrics()`; `LagCard` colour-codes the count against `lag_warn`/`lag_pause` config thresholds and shows a dash when the key has expired (worker offline)
+
+---
+
+### ✅ 🛠️ Detect AI response quality degradation before it accumulates silently
+> As a platform engineer, I want a visible counter when AI responses score low quality, so that I can catch model or prompt degradation early instead of discovering it during an audit.
+
+*Delivered by:* `sentinel_metrics_low_quality_count` — incremented by both compliance drivers when `quality_score <= 1`; surfaced as an amber-coloured stat card on the dashboard
 
 ---
 
