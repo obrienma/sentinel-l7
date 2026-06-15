@@ -70,20 +70,17 @@ Maintained as we build so future contributors (and future us) understand the *wh
 
 ---
 
-### Multitenancy: Not implemented — design intent documented
-**Decision:** No multitenancy yet. Architecture must not foreclose it.
+### Multitenancy: Deferred to a separate project (superseded by ADR-0020)
+**Original decision (2026-03-09):** No multitenancy yet, but architecture must not foreclose it — see the design plan in `docs/MULTITENANCY.md`.
+
+**Superseded (2026-05-07):** [ADR-0020](adr/0020-multi-tenancy-deferred-to-typescript-portfolio.md) decided not to implement multi-tenancy or RBAC in Sentinel-L7 at all. That work — WorkOS Organizations with role-differentiated memberships — lands in `rhizo-book` (TypeScript) instead, where it's a stronger hiring signal for the target roles.
 
 **Current state:**
-- `users` table exists with standard Laravel columns.
-- Stream consumer already uses tenant-scoped `XADD` (groundwork is laid in the backend).
+- `users` table exists with standard Laravel columns, no `tenant_id`.
+- Stream keys (`sentinel:transactions`, `sentinel:seen:{id}`) are flat, not tenant-scoped.
+- The `routes/web.php` TODO comment remains as an honest marker of known scope (ADR-0020).
 
-**Future approach (when needed):**
-1. Add `tenants` table + `tenant_id` FK on `users`.
-2. Add a `BelongsToTenant` trait with a global scope that automatically filters queries.
-3. Add a `SetTenantContext` middleware to the `auth` route group — this is where the TODO comment in `routes/web.php` points.
-4. Consider `stancl/tenancy` only if single-database multi-tenant routing becomes complex. For now, column-based scoping is sufficient.
-
-**Hard rule:** No hardcoded assumption that one user = one tenant. All future data models should include `tenant_id` from the start.
+`docs/MULTITENANCY.md` is retained as a historical design record in case Sentinel-L7 ever revisits this.
 
 ---
 

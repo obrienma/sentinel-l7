@@ -1,16 +1,18 @@
 # Multitenancy
 
-> **Status: Not implemented — design intent documented.**
-> This file exists to capture the plan so architectural decisions made now don't foreclose it later.
+> **Status: Deferred — see [ADR-0020](adr/0020-multi-tenancy-deferred-to-typescript-portfolio.md).**
+> This plan was written before the decision to defer multi-tenancy and RBAC
+> to a separate TypeScript portfolio project (`rhizo-book` + WorkOS). It is
+> kept as a historical design record, not an active roadmap for Sentinel-L7.
 
 ## Current State
 
 - Single-tenant. All data belongs to one implicit tenant.
 - `users` table has no `tenant_id`.
-- Stream consumer uses tenant-scoped `XADD` keys — the groundwork is already in place at the infrastructure layer.
-- `routes/web.php` has a `TODO` comment marking where tenant middleware should be added.
+- Stream keys (`sentinel:transactions`, `sentinel:seen:{id}`) are flat, not tenant-scoped.
+- `routes/web.php` has a `TODO` comment marking where tenant middleware would be added — retained per ADR-0020 as an honest marker of known scope.
 
-## Hard Rules (Apply Now)
+## Hard Rules (If This Plan Is Ever Revisited)
 
 - **Never assume one user = one tenant.** Any new data model should include `tenant_id` from the start — it's far cheaper to add a nullable column now than to migrate millions of rows later.
 - **Never hardcode a global query.** All future queries on tenant-owned data should go through a scoped repository or trait, not raw `Model::all()`.

@@ -184,4 +184,4 @@ Errors follow Laravel's default validation response shape (RFC 7807 compatible).
 
 ## Multitenancy Note
 
-API clients will be tenant-scoped via the API token. The token → user → tenant_id chain applies. See [MULTITENANCY.md](MULTITENANCY.md).
+Sentinel-L7 is single-tenant; multi-tenancy and RBAC were deferred to a separate project (see [ADR-0020](adr/0020-multi-tenancy-deferred-to-typescript-portfolio.md)). API tokens are scoped to a user, not a tenant. The original tenant-scoping plan is retained for reference in [MULTITENANCY.md](MULTITENANCY.md).
