@@ -7,6 +7,7 @@ use OpenTelemetry\API\Trace\TracerProviderInterface;
 use OpenTelemetry\Contrib\Otlp\OtlpHttpTransportFactory;
 use OpenTelemetry\Contrib\Otlp\SpanExporter;
 use OpenTelemetry\SDK\Common\Attribute\Attributes;
+use OpenTelemetry\SDK\Common\Time\ClockFactory;
 use OpenTelemetry\SDK\Resource\ResourceInfo;
 use OpenTelemetry\SDK\Trace\SpanProcessor\BatchSpanProcessor;
 use OpenTelemetry\SDK\Trace\TracerProvider;
@@ -20,7 +21,7 @@ class OtelServiceProvider extends ServiceProvider
             $endpoint  = rtrim(config('otel.endpoint'), '/') . '/v1/traces';
             $transport = (new OtlpHttpTransportFactory())->create($endpoint, 'application/x-protobuf');
             $exporter  = new SpanExporter($transport);
-            $processor = new BatchSpanProcessor($exporter);
+            $processor = new BatchSpanProcessor($exporter, ClockFactory::getDefault());
 
             $resource = ResourceInfo::create(Attributes::create([
                 ResourceAttributes::SERVICE_NAME => config('otel.service_name'),

@@ -57,7 +57,7 @@ class EmbeddingService
             "Amount: " . ($amount !== null ? $this->amountTier($amount) : 'N/A') . " " . ($transaction['currency'] ?? 'N/A'),
             "Type: " . ($transaction['type'] ?? 'N/A'),
             "Category: " . ($transaction['category'] ?? 'unknown'),
-            "Merchant: " . ($transaction['merchant_name'] ?? 'N/A'),
+            "Merchant: " . ($transaction['merchant'] ?? $transaction['merchant_name'] ?? 'N/A'),
             "Time: " . (isset($transaction['timestamp']) ? match(true) {
                 (int) date('G', strtotime($transaction['timestamp'])) < 6  => 'night',
                 (int) date('G', strtotime($transaction['timestamp'])) < 12 => 'morning',

@@ -1,7 +1,7 @@
 # ADR-0002: Semantic Cache Fingerprint — Amount Representation
 
 **Date:** 2026-03-27
-**Status:** Proposed
+**Status:** Accepted (2026-03-28)
 
 ## Context
 
@@ -17,15 +17,14 @@ A fourth option — relying on the embedding model's inherent numeric understand
 
 ## Decision
 
-Pending empirical testing. Before committing to buckets, lower the similarity threshold (see ADR-0003) and run a batch to measure the similarity scores actually returned for near-identical transactions with varying amounts. If the embedding naturally handles amount proximity at the new threshold, bucketing is unnecessary complexity. If scores cluster below the threshold, implement amount buckets.
+Option 3 was adopted: amounts are bucketed into five magnitude tiers (`micro`/`small`/`medium`/`large`/`very_large`) via `match(true)` in `EmbeddingService`, shipped alongside the threshold change from ADR-0015 (commit `48b83bd`).
 
 ## Consequences
 
-**If buckets are adopted:**
 - Cache hit rate improves for transactions in the same compliance tier.
-- Bucket boundaries encode a domain assumption — they must be revisited if compliance rules change (e.g. a new rule targeting amounts > $300 would require a bucket boundary there).
+- Bucket boundaries (`<$10`, `<$100`, `<$500`, `<$2000`, `>=$2000`) encode a domain assumption — they must be revisited if compliance rules change (e.g. a new rule targeting amounts > $300 would require a bucket boundary there).
 - Domain generality is reduced: other domains (IoT, content moderation) would need to define their own bucketing schemes, which is appropriate but must be documented.
 
-**If exact amounts are kept:**
-- Cache hit rate remains suppressed for continuously-valued amounts.
-- No domain assumptions encoded in the fingerprint.
+## Follow-up (outstanding)
+
+No hit-rate measurement has been recorded for bucketed amounts combined with the 0.90 threshold from ADR-0015. The same benchmark run should cover both — see ADR-0015's follow-up section.

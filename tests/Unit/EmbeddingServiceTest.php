@@ -85,6 +85,31 @@ it('produces different fingerprints for different merchants', function () {
     expect($fp1)->not->toBe($fp2);
 });
 
+it('reads merchant key used by the stream generator', function () {
+    $service = new EmbeddingService();
+    $fingerprint = $service->createTransactionFingerprint([
+        'amount'   => '25.00',
+        'currency' => 'CAD',
+        'merchant' => 'Costco',
+    ]);
+
+    expect($fingerprint)->toContain('Merchant: Costco');
+});
+
+it('prefers merchant over merchant_name when both are present', function () {
+    $service = new EmbeddingService();
+    $fingerprint = $service->createTransactionFingerprint([
+        'amount'        => '25.00',
+        'currency'      => 'CAD',
+        'merchant'      => 'Costco',
+        'merchant_name' => 'ShouldBeIgnored',
+    ]);
+
+    expect($fingerprint)
+        ->toContain('Merchant: Costco')
+        ->not->toContain('ShouldBeIgnored');
+});
+
 // ─── embed ────────────────────────────────────────────────────────────────────
 
 it('returns the embedding values array on a successful response', function () {
