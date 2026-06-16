@@ -50,6 +50,24 @@ The compliance/AML domain gave these problems real shape. The input isn't limite
 - [x] Compliance report CSV export — `GET /compliance/export` streams flagged/all events chunked at 500 rows; optional `from`/`to` date filters; UI date-range picker on the Compliance page
 - [x] Backpressure dashboard widget — consumer lag stat card reads `sentinel:consumer_lag` (10s TTL); colour-coded emerald/amber/red against `lag_warn`/`lag_pause` config thresholds; dash when worker is offline
 - [x] OTel instrumentation (Phase 2) — `OtelServiceProvider` bootstraps SDK (BatchSpanProcessor → OTLP HTTP); `AxiomProcessorService` wraps processing in wide spans with `source_id`, `anomaly_score`, `domain`, `routed_to_ai` attributes; `traceparent` extracted from stream entries to continue Synapse-L4 trace as child span (ADR-0024)
+- [x] **Grafana dashboard — "Sentinel-L7 Service"** (lives in `rhizome-observability`) — 9 panels, every one a TraceQL-metrics query over the wide `axiom.process` / `axiom.ai_analysis` span attributes (no Prometheus counters): throughput by `risk_level` / `domain` / `routed_to_ai`, processing latency p50/p95/p99 (`duration`), anomaly-score & AI-confidence avg/max, AI-by-driver, AI-error and recent-Axiom tables. Requires Tempo ≥ 2.7 with `filter_server_spans: false` (Sentinel spans are `INTERNAL`-kind). See `docs/OBSERVABILITY_MIGRATION_PLAN.md` (Phase 5 as-built notes) in that repo.
+
+---
+
+## 📈 Observability dashboard — enabling the AI panels
+
+The dashboard's **AI Analysis by Driver** and **AI Confidence** panels read the
+`ai.driver` / `ai.confidence` attributes, which `AxiomProcessorService::routeToAi()`
+only sets when `ComplianceDriver::analyze()` succeeds. With a placeholder API key the
+call throws — the failure surfaces in the **AI Errors** panel (an `exception` span
+event) and the two AI panels stay empty. To populate them:
+
+1. Set a working credential for the active `SENTINEL_AI_DRIVER`:
+   `openrouter` → `OPENROUTER_API_KEY` (+ `OPENROUTER_MODEL`); `gemini` → `GEMINI_API_KEY` (+ `GEMINI_FLASH_URL`).
+2. Send Axioms with `anomaly_score > AXIOM_AUDIT_THRESHOLD` (default `0.8`) so they route to AI — sub-threshold Axioms never emit `axiom.ai_analysis` attributes.
+3. Run `php artisan sentinel:watch-axioms` with the OTel exporter pointed at the collector.
+
+No dashboard change is needed once a driver call succeeds — the queries are already correct.
 
 ---
 
