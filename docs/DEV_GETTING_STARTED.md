@@ -30,12 +30,17 @@ UPSTASH_VECTOR_REST_TOKEN=...
 
 # Gemini AI
 GEMINI_API_KEY=...
-GEMINI_MODEL=gemini-2.0-flash
-GEMINI_EMBEDDING_MODEL=gemini-embedding-001
 
 # Active AI driver: gemini | openrouter
 SENTINEL_AI_DRIVER=gemini
+
+# Optional — override the default 0.90 similarity threshold
+# UPSTASH_VECTOR_THRESHOLD=0.90
 ```
+
+> **Note:** `GEMINI_EMBEDDING_URL` and `GEMINI_FLASH_URL` both have sensible defaults
+> (gemini-embedding-001 and gemini-2.0-flash). Override only if you need a different
+> model or proxy endpoint.
 
 ## Database
 
@@ -49,17 +54,21 @@ php artisan db:seed    # optional demo data
 ### All processes (recommended)
 
 ```bash
-composer dev-full
-# Starts: web server + worker + reclaimer (via concurrently)
+composer dev
+# Starts: web server, queue worker, logs (pail), Vite, sentinel:watch-axioms
 ```
+
+> `composer dev` does **not** include `sentinel:watch` (the transaction stream
+> consumer). Run it manually in a separate terminal when testing the transaction
+> pipeline — see Seeding Test Data below.
 
 ### Individually
 
 ```bash
-composer dev                         # web + queue + logs + vite
 php artisan serve                    # web only
-php artisan sentinel:consume         # stream worker
-php artisan sentinel:reclaim         # PEL reclaimer
+php artisan queue:listen             # Laravel queue worker
+php artisan sentinel:watch           # transaction stream consumer (XREADGROUP)
+php artisan sentinel:watch-axioms    # Synapse-L4 axiom consumer (XREADGROUP)
 npm run dev                          # Vite HMR (frontend)
 ```
 
@@ -70,14 +79,45 @@ npm run dev                          # Vite HMR (frontend)
 php artisan tinker
 >>> \App\Models\User::factory()->create(['email' => 'you@example.com', 'password' => bcrypt('password')]);
 
-# Simulate transaction stream (100 events)
-php artisan sentinel:stream --limit=100
-
 # Index policy documents into Vector KB
 php artisan sentinel:ingest
 
 # Reset dashboard metrics counters
 php artisan sentinel:reset-metrics
+```
+
+### Simulating the transaction pipeline
+
+`sentinel:stream` writes to the Redis stream; `sentinel:watch` consumes and
+processes them. Run both together in separate terminals:
+
+```bash
+# Terminal 1 — start the worker
+php artisan sentinel:watch
+
+# Terminal 2 — publish 100 transactions
+php artisan sentinel:stream --limit=100
+
+# For faster publishing (no inter-message delay):
+php artisan sentinel:stream --limit=100 --speed=0
+```
+
+### Clearing dev state
+
+```bash
+# Reset dashboard counters
+php artisan sentinel:reset-metrics
+
+# Clear the recent transactions feed
+php artisan tinker --execute="\Illuminate\Support\Facades\Redis::del('sentinel:recent_transactions');"
+
+# Flush the Upstash Vector cache (default namespace)
+php artisan tinker --execute="
+\$url = config('services.upstash_vector.url');
+\$token = config('services.upstash_vector.token');
+\Illuminate\Support\Facades\Http::withToken(\$token)->post(\$url . '/reset');
+echo 'done';
+"
 ```
 
 ## Frontend
@@ -125,7 +165,7 @@ composer test                               # full Pest suite
 | CSS + Tailwind config | `resources/css/app.css` |
 | Inertia entry | `resources/js/app.js` |
 | Web routes | `routes/web.php` |
-| Domain logic | `app/Services/Sentinel/Logic/` |
-| AI drivers | `app/Services/Sentinel/Drivers/` |
+| Services | `app/Services/` |
+| AI drivers | `app/Services/Compliance/` |
 | Artisan commands | `app/Console/Commands/` |
 | Pest tests | `tests/` |
