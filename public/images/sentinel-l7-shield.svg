@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" width="100%" height="100%">
+  <defs>
+    <!-- Background Gradient -->
+    <radialGradient id="bg-glow" cx="50%" cy="50%" r="70%">
+      <stop offset="0%" stop-color="#12061c" />
+      <stop offset="100%" stop-color="#050209" />
+    </radialGradient>
+
+    <!-- Neon Purple Glow -->
+    <linearGradient id="purple-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#a855f7" />
+      <stop offset="100%" stop-color="#6b21a8" />
+    </linearGradient>
+
+    <!-- Neon Green Glow -->
+    <linearGradient id="green-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#22c55e" />
+      <stop offset="100%" stop-color="#15803d" />
+    </linearGradient>
+
+    <!-- Glow Filters for Cyber Effect -->
+    <filter id="glow-heavy" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="8" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+    <filter id="glow-subtle" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="3" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+
+  <!-- Dark Mode Canvas -->
+  <rect width="800" height="800" fill="url(#bg-glow)" />
+
+  <g transform="translate(400, 400)">
+    <!-- ================= BACKGROUND RHIZOME NETWORK ================= -->
+    <g stroke-linecap="round" opacity="0.85">
+      <!-- Outer Node Lines (Purple) -->
+      <path d="M 0,-150 L -80,-220 L -60,-320 M -80,-220 L -180,-240" fill="none" stroke="url(#purple-grad)" stroke-width="3" filter="url(#glow-subtle)" />
+      <path d="M 0,150 L 80,220 L 140,300 M 80,220 L 190,200" fill="none" stroke="url(#purple-grad)" stroke-width="3" filter="url(#glow-subtle)" />
+      <path d="M -150,0 L -240,60 L -310,20 M -240,60 L -260,160" fill="none" stroke="url(#purple-grad)" stroke-width="3" filter="url(#glow-subtle)" />
+      <path d="M 150,0 L 220,-80 L 300,-60 M 220,-80 L 240,-180" fill="none" stroke="url(#purple-grad)" stroke-width="3" filter="url(#glow-subtle)" />
+
+      <!-- Intersecting Biomorphic Lines (Green) -->
+      <path d="M -106,-106 L -200,-120 L -280,-220 M -200,-120 L -160,-220" fill="none" stroke="url(#green-grad)" stroke-width="3.5" filter="url(#glow-heavy)" />
+      <path d="M 106,106 L 200,120 L 250,250 M 200,120 L 290,90" fill="none" stroke="url(#green-grad)" stroke-width="3.5" filter="url(#glow-heavy)" />
+      <path d="M 106,-106 L 120,-200 L 220,-260 M 120,-200 L 70,-280" fill="none" stroke="url(#green-grad)" stroke-width="3.5" filter="url(#glow-heavy)" />
+      <path d="M -106,106 L -120,200 L -70,290 M -120,200 L -220,240" fill="none" stroke="url(#green-grad)" stroke-width="3.5" filter="url(#glow-heavy)" />
+    </g>
+
+    <!-- Rhizome Nodes (Network Dots) -->
+    <g fill="#22c55e" filter="url(#glow-subtle)">
+      <circle cx="-280" cy="-220" r="5" />
+      <circle cx="-160" cy="-220" r="4" />
+      <circle cx="250" cy="250" r="6" />
+      <circle cx="290" cy="90" r="4" />
+      <circle cx="220" cy="-260" r="5" />
+      <circle cx="-70" cy="290" r="5" />
+    </g>
+    <g fill="#a855f7" filter="url(#glow-subtle)">
+      <circle cx="-60" cy="-320" r="5" />
+      <circle cx="-180" cy="-240" r="4" />
+      <circle cx="140" cy="300" r="6" />
+      <circle cx="-310" cy="20" r="5" />
+      <circle cx="300" cy="-60" r="5" />
+    </g>
+
+    <!-- ================= CENTRAL SENTINEL SHIELD (L7) ================= -->
+    <!-- Outer Layer 7 Hex Shield Frame -->
+    <polygon points="0,-160 138,-80 138,80 0,160 -138,80 -138,-80" 
+             fill="none" stroke="url(#purple-grad)" stroke-width="6" filter="url(#glow-heavy)" />
+
+    <!-- Inner Core: The Monitoring "Eye" -->
+    <polygon points="0,-110 95,-55 95,55 0,110 -95,55 -95,-55" 
+             fill="#090311" stroke="url(#green-grad)" stroke-width="4" filter="url(#glow-subtle)" />
+
+    <!-- Focal L7 Focal Point -->
+    <g filter="url(#glow-heavy)">
+      <!-- Central Core Dot -->
+      <circle cx="0" cy="0" r="20" fill="#22c55e" />
+      <!-- Target/Focus Brackets representing continuous inspection -->
+      <path d="M -40,-20 L -40,-40 L -20,-40" fill="none" stroke="#22c55e" stroke-width="4" stroke-linecap="round" />
+      <path d="M 40,-20 L 40,-40 L 20,-40" fill="none" stroke="#22c55e" stroke-width="4" stroke-linecap="round" />
+      <path d="M -40,20 L -40,40 L -20,40" fill="none" stroke="#22c55e" stroke-width="4" stroke-linecap="round" />
+      <path d="M 40,20 L 40,40 L 20,40" fill="none" stroke="#22c55e" stroke-width="4" stroke-linecap="round" />
+    </g>
+
+    <!-- Decorative Subtle Grid Lines inside the Eye -->
+    <line x1="-95" y1="0" x2="95" y2="0" stroke="#a855f7" stroke-width="1" opacity="0.3" />
+    <line x1="0" y1="-110" x2="0" y2="110" stroke="#a855f7" stroke-width="1" opacity="0.3" />
+  </g>
+</svg>
