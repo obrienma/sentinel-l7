@@ -1,8 +1,8 @@
 <p align="center">
-  <img width="700" alt="Sentinel-L7" src="public/images/sentinel-l7-shield.svg" />
+  <img width="300" alt="Sentinel-L7" src="public/images/sentinel-l7-shield.svg" />
 </p>
 
-Sentinel-L7 is a multi-process Laravel application built to explore production patterns for async message processing, semantic caching, and fault-tolerant distributed systems. It processes any scored event stream — financial events, medical access logs, SaaS API activity, raw system telemetry — and classifies each event against an indexed corpus of domain-specific policy documents to determine whether it exceeds a risk threshold. A compliance engine (AML, GDPR, HIPAA) is the domain used here; the architecture is domain-agnostic.
+<img src="public/images/sentinel-l7-name-lime.svg" alt="Sentinel-L7" height="25" valign="middle" /> is a multi-process Laravel application built to explore production patterns for async message processing, semantic caching, and fault-tolerant distributed systems. It processes any scored event stream — financial events, medical access logs, SaaS API activity, raw system telemetry — and classifies each event against an indexed corpus of domain-specific policy documents to determine whether it exceeds a risk threshold. A compliance engine (AML, GDPR, HIPAA) is the domain used here; the architecture is domain-agnostic.
 
 The [Synapse-L4](https://github.com/obrienma/synapse-l4) sidecar handles the [EventHorizon](https://github.com/obrienma/EventHorizon) telemetry path: it validates raw events through an LLM judge pass and emits typed, scored Axioms into the pipeline. Policy context is retrieved at analysis time by semantic similarity from a vector knowledge base (Upstash Vector, `policies` namespace) and filtered by domain tag, so an AML analysis is never grounded in GDPR chunks and vice versa.
 
@@ -428,7 +428,7 @@ No dashboard change is needed once a driver call succeeds — the queries are al
 | [USER_STORIES.md](docs/USER_STORIES.md) | Compliance officer, platform engineer, AI agent | — |
 | [DEV_GETTING_STARTED.md](docs/DEV_GETTING_STARTED.md) | Full local setup walkthrough | — |
 | [journal.md](docs/journal.md) | Engineering journal — one entry per phase | — |
-| [adr/](docs/adr/) | Architecture Decision Records (ADR-0001 – ADR-0024) | — |
+| [adr/](docs/adr/) | Architecture Decision Records (ADR-0001 – ADR-0025) | — |
 
 
 ## 🗺️ Roadmap
@@ -442,6 +442,7 @@ No dashboard change is needed once a driver call succeeds — the queries are al
 * [ ] **CI pipeline** — architecture tests + unit suite running on every push
 * [ ] **End-to-end idempotency audit** — verify EventHorizon event ID flows through Synapse-L4 as `source_id` on the Axiom (early-exit dedup in `AxiomProcessorService` is done; source_id provenance through the full chain is not yet verified)
 * [ ] **Fingerprint field reconciliation (ADR-0002/ADR-0015)** — the transaction fingerprint now includes a randomly-templated `message` field, adding entropy that may suppress cache hits; revisit alongside the open amount-representation (ADR-0002) and similarity-threshold (ADR-0015) questions
+* [ ] **Ollama embedding driver implementation (ADR-0025)** — `EmbeddingDriver` interface + `EmbeddingManager`, `OllamaEmbeddingDriver` (nomic-embed-text v1.5, 768-dim, task-prefixed inputs), Upstash Vector index recreated at 768 dimensions, policy KB re-ingested; decision recorded, implementation not yet started
 
 ### 📦 Production-Ready Baseline
 
