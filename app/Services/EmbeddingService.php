@@ -1,4 +1,5 @@
 <?php
+
 namespace App\Services;
 
 use Illuminate\Support\Facades\Http;
@@ -17,21 +18,21 @@ class EmbeddingService
         ])
             ->timeout(10)
             ->retry(3, 200, throw: false)
-            ->post($baseUrl . '?key=' . $apiKey, [
+            ->post($baseUrl.'?key='.$apiKey, [
                 'content' => [
                     'parts' => [
-                        ['text' => $text]
+                        ['text' => $text],
                     ],
                 ],
                 'output_dimensionality' => 1536,
             ]);
 
-        if (!$response->successful()) {
+        if (! $response->successful()) {
             Log::warning('Gemini embedding failed', [
                 'status' => $response->status(),
-                'body'   => $response->body(),
+                'body' => $response->body(),
             ]);
-            throw new \RuntimeException('Gemini embedding failed: ' . $response->body());
+            throw new \RuntimeException('Gemini embedding failed: '.$response->body());
         }
 
         return $response->json('embedding.values');
@@ -39,12 +40,12 @@ class EmbeddingService
 
     private function amountTier(float $amount): string
     {
-        return match(true) {
-            $amount < 10    => 'micro',
-            $amount < 100   => 'small',
-            $amount < 500   => 'medium',
-            $amount < 2000  => 'large',
-            default         => 'very_large',
+        return match (true) {
+            $amount < 10 => 'micro',
+            $amount < 100 => 'small',
+            $amount < 500 => 'medium',
+            $amount < 2000 => 'large',
+            default => 'very_large',
         };
     }
 
@@ -54,20 +55,21 @@ class EmbeddingService
 
         // Create a semantic fingerprint of the transaction
         $fingerprint = implode(' | ', [
-            "Amount: " . ($amount !== null ? $this->amountTier($amount) : 'N/A') . " " . ($transaction['currency'] ?? 'N/A'),
-            "Type: " . ($transaction['type'] ?? 'N/A'),
-            "Category: " . ($transaction['category'] ?? 'unknown'),
-            "Merchant: " . ($transaction['merchant'] ?? $transaction['merchant_name'] ?? 'N/A'),
-            "Time: " . (isset($transaction['timestamp']) ? match(true) {
-                (int) date('G', strtotime($transaction['timestamp'])) < 6  => 'night',
+            'Amount: '.($amount !== null ? $this->amountTier($amount) : 'N/A').' '.($transaction['currency'] ?? 'N/A'),
+            'Type: '.($transaction['type'] ?? 'N/A'),
+            'Category: '.($transaction['category'] ?? 'unknown'),
+            'Merchant: '.($transaction['merchant'] ?? $transaction['merchant_name'] ?? 'N/A'),
+            'Time: '.(isset($transaction['timestamp']) ? match (true) {
+                (int) date('G', strtotime($transaction['timestamp'])) < 6 => 'night',
                 (int) date('G', strtotime($transaction['timestamp'])) < 12 => 'morning',
                 (int) date('G', strtotime($transaction['timestamp'])) < 17 => 'afternoon',
                 (int) date('G', strtotime($transaction['timestamp'])) < 21 => 'evening',
                 default => 'night',
             } : 'N/A'),
+            'Message: '.($transaction['message'] ?? 'N/A'),
         ]);
 
-        Log::debug('[Sentinel] Fingerprint: ' . $fingerprint);
+        Log::debug('[Sentinel] Fingerprint: '.$fingerprint);
 
         return $fingerprint;
     }

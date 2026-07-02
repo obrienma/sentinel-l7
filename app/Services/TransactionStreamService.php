@@ -1,4 +1,5 @@
 <?php
+
 namespace App\Services;
 
 use Illuminate\Support\Facades\Redis as LRedis;
@@ -7,20 +8,37 @@ use Illuminate\Support\Str;
 class TransactionStreamService
 {
     private const STREAM_KEY = 'transactions';
+
     private const STREAM_MAXLEN = '1000';
+
     private const GROUP = 'sentinel-consumers';
 
     public function generate(): \Generator
     {
-        $merchants = config('sentinel.simulation.merchants');
-        $currencies = config('sentinel.simulation.currencies');
+        $profiles = config('sentinel.simulation.merchants');
+        $templates = config('sentinel.simulation.messages');
+
+        // Build weighted index pool once per generator lifetime
+        $pool = [];
+        foreach ($profiles as $i => $profile) {
+            for ($w = 0; $w < ($profile['weight'] ?? 1); $w++) {
+                $pool[] = $i;
+            }
+        }
 
         while (true) {
+            $p = $profiles[$pool[array_rand($pool)]];
+            $msgs = $templates[$p['category']] ?? ['Transaction'];
+
             yield [
-                'id'        => Str::uuid()->toString(),
-                'merchant'  => $merchants[array_rand($merchants)],
-                'currency'  => $currencies[array_rand($currencies)],
-                'amount'    => random_int(100, 50000) / 100,
+                'id' => Str::uuid()->toString(),
+                'merchant' => $p['name'],
+                'category' => $p['category'],
+                'currency' => $p['currencies'][array_rand($p['currencies'])],
+                'amount' => random_int($p['amount_min'], $p['amount_max']) / 100,
+                'message' => $msgs[array_rand($msgs)],
+                'is_threat' => $p['is_threat'],
+                'source' => 'simulation_engine',
                 'timestamp' => now()->toIso8601String(),
             ];
         }
@@ -36,12 +54,12 @@ class TransactionStreamService
         // Use Redis SETNX (Set if Not Exists) as a 24-hour idempotency key
         $isNew = LRedis::set("idemp:{$data['id']}", 'processed', 'EX', 86400, 'NX');
 
-        if (!$isNew) {
+        if (! $isNew) {
             return false;
         }
 
         LRedis::executeRaw([
-            'XADD', self::STREAM_KEY, 'MAXLEN', '~', self::STREAM_MAXLEN, '*', 'data', json_encode($data)
+            'XADD', self::STREAM_KEY, 'MAXLEN', '~', self::STREAM_MAXLEN, '*', 'data', json_encode($data),
         ]);
 
         return true;
@@ -144,6 +162,7 @@ class TransactionStreamService
     {
         // Summary form: XPENDING <stream> <group> → [total, min-id, max-id, [[consumer, count], ...]]
         $result = LRedis::executeRaw(['XPENDING', self::STREAM_KEY, self::GROUP]);
+
         return isset($result[0]) ? (int) $result[0] : 0;
     }
 
@@ -164,6 +183,7 @@ class TransactionStreamService
     public function readLagKey(): int
     {
         $val = LRedis::get('sentinel:consumer_lag');
+
         return $val !== null ? (int) $val : 0;
     }
 }

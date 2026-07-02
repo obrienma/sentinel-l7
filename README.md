@@ -441,6 +441,7 @@ No dashboard change is needed once a driver call succeeds — the queries are al
 * [ ] **OAuth on the MCP endpoint** — `Mcp::oauthRoutes()` before production agent access
 * [ ] **CI pipeline** — architecture tests + unit suite running on every push
 * [ ] **End-to-end idempotency audit** — verify EventHorizon event ID flows through Synapse-L4 as `source_id` on the Axiom (early-exit dedup in `AxiomProcessorService` is done; source_id provenance through the full chain is not yet verified)
+* [ ] **Fingerprint field reconciliation (ADR-0002/ADR-0015)** — the transaction fingerprint now includes a randomly-templated `message` field, adding entropy that may suppress cache hits; revisit alongside the open amount-representation (ADR-0002) and similarity-threshold (ADR-0015) questions
 
 ### 📦 Production-Ready Baseline
 
@@ -455,6 +456,8 @@ No dashboard change is needed once a driver call succeeds — the queries are al
 * Backpressure step 1 — `XREAD COUNT 1` on transaction stream + `XLEN` producer guard (`sentinel.backpressure.publish_pause_threshold`, default 800) pauses `sentinel:stream` when depth exceeds threshold
 * Backpressure step 2 — XREADGROUP + XAUTOCLAIM self-healing worker pool (ADR-0022): transaction stream migrated to consumer group `sentinel-consumers`; `XAUTOCLAIM` embedded at top of each worker loop; dead-letter guard ACKs poison messages at `delivery_count >= 3`; dedicated reclaimer daemon removed
 * Backpressure step 3 — graduated consumer lag signal (ADR-0023): worker writes `XPENDING` count to `sentinel:consumer_lag` (TTL 10s); producer applies soft-limit sleep (500ms, configurable) at lag > 50, spin-wait at lag > 200
+* Weighted transaction simulation — `simulation.merchants` config holds weighted profiles (category, weight, amount range, currencies, `is_threat`) instead of a flat uniform-probability list; `TransactionStreamService::generate()` samples via an index-repetition pool so traffic mix reflects realistic merchant volume
+* Benchmark seeder — `database/seeders/TransactionSeeder.php` runs N simulated transactions through the live pipeline and reports cache hit rate, fallbacks, embedding API call count, and threat rate
 
 #### 🧠 AI Compliance Engine
 * ComplianceDriver stack — `GeminiDriver` (Gemini Flash + policy RAG), `OpenRouterDriver` (OpenAI-compatible, swap via env), `ComplianceManager` (Laravel Service Manager pattern)
