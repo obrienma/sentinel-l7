@@ -3,6 +3,7 @@
 namespace App\Services\Compliance;
 
 use App\Contracts\ComplianceDriver;
+use App\Contracts\EmbeddingDriver;
 use App\Services\EmbeddingService;
 use App\Services\VectorCacheService;
 use Illuminate\Support\Facades\Cache;
@@ -56,7 +57,7 @@ class GeminiDriver implements ComplianceDriver
                 : null;
             $filter = $domain !== null ? "domain = '{$domain}'" : null;
 
-            $vector = $this->embedding->embed($query);
+            $vector = $this->embedding->embed($query, EmbeddingDriver::TASK_QUERY);
             $chunks = $this->vectorCache->searchNamespace($vector, 'policies', 0.70, 3, $filter);
 
             $scores = array_column($chunks, 'score');

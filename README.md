@@ -442,7 +442,7 @@ No dashboard change is needed once a driver call succeeds — the queries are al
 * [ ] **CI pipeline** — architecture tests + unit suite running on every push
 * [ ] **End-to-end idempotency audit** — verify EventHorizon event ID flows through Synapse-L4 as `source_id` on the Axiom (early-exit dedup in `AxiomProcessorService` is done; source_id provenance through the full chain is not yet verified)
 * [ ] **Fingerprint field reconciliation (ADR-0002/ADR-0015)** — the transaction fingerprint now includes a randomly-templated `message` field, adding entropy that may suppress cache hits; revisit alongside the open amount-representation (ADR-0002) and similarity-threshold (ADR-0015) questions
-* [ ] **Ollama embedding driver implementation (ADR-0025)** — `EmbeddingDriver` interface + `EmbeddingManager`, `OllamaEmbeddingDriver` (nomic-embed-text v1.5, 768-dim, task-prefixed inputs), Upstash Vector index recreated at 768 dimensions, policy KB re-ingested; decision recorded, implementation not yet started
+* [ ] **Ollama embedding threshold re-validation (ADR-0015/ADR-0025)** — cutover is live (`SENTINEL_EMBEDDING_DRIVER=ollama`, Upstash Vector index recreated at 768-dim, `sentinel:ingest` re-run against nomic-embed-text v1.5); still need to re-validate `UPSTASH_VECTOR_THRESHOLD` against nomic's score distribution before treating `ollama` as the production default
 
 ### 📦 Production-Ready Baseline
 
@@ -466,6 +466,7 @@ No dashboard change is needed once a driver call succeeds — the queries are al
 * Domain-scoped RAG retrieval — `domain` metadata tag at ingest; server-side filter at query time; retrieval quality logging
 * Output quality scoring — 4-signal rubric on every compliance driver response; `low quality score` warning when score ≤ 1
 * Retrieval coverage logging — `mean_score` and `under_indexed` per RAG query; `Log::warning` fires when a domain filter returns < 2 chunks
+* EmbeddingDriver stack (ADR-0025) — `GeminiEmbeddingDriver`, `OllamaEmbeddingDriver` (nomic-embed-text v1.5, 768-dim, task-prefixed `search_document`/`search_query` inputs), `EmbeddingManager` (Service Manager pattern), swap via `SENTINEL_EMBEDDING_DRIVER`; `EmbeddingService` now delegates to the resolved driver instead of calling Gemini directly. Live in this environment: Upstash Vector index recreated at 768-dim, policy KB re-ingested against Ollama.
 
 #### 🔷 Axiom / Synapse-L4 Integration
 * Synapse-L4 Axiom ingestion — `synapse:axioms` Redis stream + `sentinel:watch-axioms` worker

@@ -102,7 +102,7 @@ class VectorCacheService
         $response = Http::withToken($this->token)
             ->timeout(5)
             ->retry(2, 150, throw: false)
-            ->post("{$this->baseUrl}/namespaces/{$namespace}/query", $payload);
+            ->post("{$this->baseUrl}/query/{$namespace}", $payload);
 
         if (! $response->successful()) {
             Log::warning('Vector namespace search failed', [
@@ -132,7 +132,7 @@ class VectorCacheService
         $response = Http::withToken($this->token)
             ->timeout(5)
             ->retry(2, 150, throw: false)
-            ->post("{$this->baseUrl}/namespaces/{$namespace}/upsert", [
+            ->post("{$this->baseUrl}/upsert/{$namespace}", [
                 [
                     'id' => $id,
                     'vector' => $embedding,

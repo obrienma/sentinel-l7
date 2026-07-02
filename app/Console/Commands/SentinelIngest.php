@@ -54,12 +54,16 @@ class SentinelIngest extends Command
 
                 try {
                     $vector = $embedding->embed($text);
-                    $vectorCache->upsertNamespace($id, $vector, [
+                    $upserted = $vectorCache->upsertNamespace($id, $vector, [
                         'text' => $text,
                         'source' => $filename,
                         'chunk' => $index,
                         'domain' => $domain,
                     ], self::NAMESPACE);
+
+                    if (! $upserted) {
+                        throw new \RuntimeException('Vector upsert failed');
+                    }
 
                     $totalDocs++;
                 } catch (\Throwable $e) {

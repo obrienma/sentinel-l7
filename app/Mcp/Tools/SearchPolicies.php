@@ -2,6 +2,7 @@
 
 namespace App\Mcp\Tools;
 
+use App\Contracts\EmbeddingDriver;
 use App\Services\EmbeddingService;
 use App\Services\VectorCacheService;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
@@ -24,8 +25,8 @@ class SearchPolicies extends Tool
             'limit' => 'sometimes|integer|min:1|max:10',
         ]);
 
-        $vector   = $embedding->embed($validated['query']);
-        $limit    = $validated['limit'] ?? 3;
+        $vector = $embedding->embed($validated['query'], EmbeddingDriver::TASK_QUERY);
+        $limit = $validated['limit'] ?? 3;
         $policies = $vectorCache->searchNamespace($vector, 'policies', 0.70, $limit);
 
         if ($policies === [] && $vector === null) {

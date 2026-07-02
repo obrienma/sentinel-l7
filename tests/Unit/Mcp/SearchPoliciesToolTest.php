@@ -10,8 +10,8 @@ $fakeVector = array_fill(0, 1536, 0.1);
 
 beforeEach(function () {
     config([
-        'services.gemini.api_key'     => 'test-key',
-        'services.upstash_vector.url'   => 'https://fake-vector.upstash.io',
+        'services.gemini.api_key' => 'test-key',
+        'services.upstash_vector.url' => 'https://fake-vector.upstash.io',
         'services.upstash_vector.token' => 'fake-token',
     ]);
 });
@@ -20,8 +20,8 @@ beforeEach(function () {
 
 it('returns matching policy chunks above the 0.70 threshold', function () use ($fakeVector) {
     Http::fake([
-        '*embedContent*'     => Http::response(['embedding' => ['values' => $fakeVector]], 200),
-        '*/namespaces/policies/query' => Http::response([
+        '*embedContent*' => Http::response(['embedding' => ['values' => $fakeVector]], 200),
+        '*/query/policies' => Http::response([
             'result' => [
                 ['id' => 'aml-001-threshold', 'score' => 0.88, 'metadata' => ['title' => 'AML Threshold Rule']],
                 ['id' => 'bsa-structuring',   'score' => 0.72, 'metadata' => ['title' => 'BSA Structuring']],
@@ -41,8 +41,8 @@ it('returns matching policy chunks above the 0.70 threshold', function () use ($
 
 it('filters out results below the 0.70 threshold', function () use ($fakeVector) {
     Http::fake([
-        '*embedContent*'     => Http::response(['embedding' => ['values' => $fakeVector]], 200),
-        '*/namespaces/policies/query' => Http::response([
+        '*embedContent*' => Http::response(['embedding' => ['values' => $fakeVector]], 200),
+        '*/query/policies' => Http::response([
             'result' => [
                 ['id' => 'aml-001',    'score' => 0.85, 'metadata' => []],
                 ['id' => 'irrelevant', 'score' => 0.55, 'metadata' => []],
@@ -62,8 +62,8 @@ it('filters out results below the 0.70 threshold', function () use ($fakeVector)
 
 it('returns empty policies array when no results exceed the threshold', function () use ($fakeVector) {
     Http::fake([
-        '*embedContent*'     => Http::response(['embedding' => ['values' => $fakeVector]], 200),
-        '*/namespaces/policies/query' => Http::response([
+        '*embedContent*' => Http::response(['embedding' => ['values' => $fakeVector]], 200),
+        '*/query/policies' => Http::response([
             'result' => [
                 ['id' => 'low-match', 'score' => 0.40, 'metadata' => []],
             ],
@@ -81,8 +81,8 @@ it('returns empty policies array when no results exceed the threshold', function
 
 it('returns empty policies when Upstash is unavailable', function () use ($fakeVector) {
     Http::fake([
-        '*embedContent*'     => Http::response(['embedding' => ['values' => $fakeVector]], 200),
-        '*/namespaces/policies/query' => Http::response(null, 503),
+        '*embedContent*' => Http::response(['embedding' => ['values' => $fakeVector]], 200),
+        '*/query/policies' => Http::response(null, 503),
     ]);
 
     $response = SentinelServer::tool(SearchPolicies::class, [
@@ -126,8 +126,8 @@ it('returns a validation error when limit exceeds 10', function () {
 
 it('response contains policies and count keys', function () use ($fakeVector) {
     Http::fake([
-        '*embedContent*'     => Http::response(['embedding' => ['values' => $fakeVector]], 200),
-        '*/namespaces/policies/query' => Http::response(['result' => []], 200),
+        '*embedContent*' => Http::response(['embedding' => ['values' => $fakeVector]], 200),
+        '*/query/policies' => Http::response(['result' => []], 200),
     ]);
 
     $response = SentinelServer::tool(SearchPolicies::class, ['query' => 'GDPR data retention']);
@@ -139,8 +139,8 @@ it('response contains policies and count keys', function () use ($fakeVector) {
 
 it('scores in the response are rounded to 4 decimal places', function () use ($fakeVector) {
     Http::fake([
-        '*embedContent*'     => Http::response(['embedding' => ['values' => $fakeVector]], 200),
-        '*/namespaces/policies/query' => Http::response([
+        '*embedContent*' => Http::response(['embedding' => ['values' => $fakeVector]], 200),
+        '*/query/policies' => Http::response([
             'result' => [
                 ['id' => 'gdpr-001', 'score' => 0.812345678, 'metadata' => []],
             ],

@@ -8,23 +8,23 @@ uses(Tests\TestCase::class);
 
 beforeEach(function () {
     config([
-        'services.gemini.api_key'                      => 'test-key',
-        'services.upstash_vector.url'                  => 'https://fake-vector.upstash.io',
-        'services.upstash_vector.token'                => 'fake-token',
+        'services.gemini.api_key' => 'test-key',
+        'services.upstash_vector.url' => 'https://fake-vector.upstash.io',
+        'services.upstash_vector.token' => 'fake-token',
         'services.upstash_vector.similarity_threshold' => 0.70,
     ]);
 });
 
 it('derives aml domain from aml-bsa-compliance filename', function () {
     $filename = 'aml-bsa-compliance';
-    $domain   = explode('-', $filename)[0];
+    $domain = explode('-', $filename)[0];
 
     expect($domain)->toBe('aml');
 });
 
 it('derives gdpr domain from gdpr-data-processing filename', function () {
     $filename = 'gdpr-data-processing';
-    $domain   = explode('-', $filename)[0];
+    $domain = explode('-', $filename)[0];
 
     expect($domain)->toBe('gdpr');
 });
@@ -38,16 +38,17 @@ it('includes domain key in the metadata passed to upsertNamespace', function () 
     $vectorCache = Mockery::mock(VectorCacheService::class);
     $vectorCache->shouldReceive('upsertNamespace')
         ->andReturnUsing(function ($id, $vec, $metadata, $ns) use (&$missing) {
-            if (!array_key_exists('domain', $metadata)) {
+            if (! array_key_exists('domain', $metadata)) {
                 $missing[] = $id;
             }
+
             return true;
         });
     $this->instance(VectorCacheService::class, $vectorCache);
 
     Artisan::call('sentinel:ingest', ['--path' => 'policies']);
 
-    expect($missing)->toBeEmpty('chunks missing domain tag: ' . implode(', ', $missing));
+    expect($missing)->toBeEmpty('chunks missing domain tag: '.implode(', ', $missing));
 });
 
 it('tags each chunk with the domain derived from the filename', function () {
@@ -56,10 +57,11 @@ it('tags each chunk with the domain derived from the filename', function () {
     $this->instance(EmbeddingService::class, $embedding);
 
     $capturedMetadata = [];
-    $vectorCache      = Mockery::mock(VectorCacheService::class);
+    $vectorCache = Mockery::mock(VectorCacheService::class);
     $vectorCache->shouldReceive('upsertNamespace')
         ->andReturnUsing(function ($id, $vector, $metadata, $namespace) use (&$capturedMetadata) {
             $capturedMetadata[] = $metadata;
+
             return true;
         });
     $this->instance(VectorCacheService::class, $vectorCache);
@@ -70,4 +72,21 @@ it('tags each chunk with the domain derived from the filename', function () {
     expect($domains)->not->toBeEmpty()
         ->and($domains)->toContain('aml')
         ->and($domains)->toContain('gdpr');
+});
+
+it('reports failure when upsertNamespace returns false instead of throwing', function () {
+    $embedding = Mockery::mock(EmbeddingService::class);
+    $embedding->shouldReceive('embed')->andReturn(array_fill(0, 1536, 0.1));
+    $this->instance(EmbeddingService::class, $embedding);
+
+    $vectorCache = Mockery::mock(VectorCacheService::class);
+    $vectorCache->shouldReceive('upsertNamespace')->andReturn(false);
+    $this->instance(VectorCacheService::class, $vectorCache);
+
+    $exitCode = Artisan::call('sentinel:ingest', ['--path' => 'policies']);
+    $output = Artisan::output();
+
+    expect($exitCode)->toBe(Illuminate\Console\Command::FAILURE)
+        ->and($output)->toContain('0 chunks indexed')
+        ->and($output)->toContain('Failed chunk');
 });

@@ -2,40 +2,18 @@
 
 namespace App\Services;
 
-use Illuminate\Support\Facades\Http;
+use App\Contracts\EmbeddingDriver;
 use Illuminate\Support\Facades\Log;
 
 class EmbeddingService
 {
-    public function embed(string $text): array
+    public function __construct(
+        private readonly EmbeddingDriver $driver,
+    ) {}
+
+    public function embed(string $text, string $task = EmbeddingDriver::TASK_DOCUMENT): array
     {
-        $apiKey = config('services.gemini.api_key');
-        $baseUrl = config('services.gemini.embedding_url')
-            ?: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent';
-
-        $response = Http::withHeaders([
-            'Content-Type' => 'application/json',
-        ])
-            ->timeout(10)
-            ->retry(3, 200, throw: false)
-            ->post($baseUrl.'?key='.$apiKey, [
-                'content' => [
-                    'parts' => [
-                        ['text' => $text],
-                    ],
-                ],
-                'output_dimensionality' => 1536,
-            ]);
-
-        if (! $response->successful()) {
-            Log::warning('Gemini embedding failed', [
-                'status' => $response->status(),
-                'body' => $response->body(),
-            ]);
-            throw new \RuntimeException('Gemini embedding failed: '.$response->body());
-        }
-
-        return $response->json('embedding.values');
+        return $this->driver->embed($text, $task);
     }
 
     private function amountTier(float $amount): string
