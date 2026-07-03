@@ -569,3 +569,124 @@ Verified end-to-end after all fixes: a real query embed through Ollama
 returned 3 relevant policy chunks (top score 0.83, correctly ranked the
 AML policy highest for an AML query) — not just a clean test run, but the
 actual retrieval path working against real infrastructure.
+
+---
+
+## Phase 11 — Fix Permanently-Tripped XLEN Backpressure Gate — 2026-07-02
+Files: app/Console/Commands/StreamTransactions.php, config/sentinel.php, tests/Feature/StreamTransactionsTest.php
+
+With the Ollama cutover live, tried to generate fresh demo data by running
+all services and `sentinel:stream --limit=100`. Nothing moved: the
+dashboard total sat at 307, `sentinel:watch` was visibly processing
+transactions with an implausible ~99% cache-hit rate, and Upstash's
+`default` namespace held exactly one vector. Three symptoms, one root
+cause.
+
+### Anti-Pattern Avoided: Debugging Symptoms Instead of Finding the One Cause
+The instinct was to chase each symptom separately — investigate the high
+hit rate as an embedding-quality problem, investigate "stuck at 307" as a
+dashboard refresh problem. Both were red herrings. Stepping back with a
+single side-by-side check (`XLEN` vs `XPENDING` summary on the same
+stream) resolved all three symptoms at once: `XLEN` read 801 while the
+consumer group's pending count was `0` — a fully-drained backlog reported
+as a deep one.
+
+### Challenge: `XADD ... MAXLEN ~ 1000` Makes Raw Stream Size a Bad Backpressure Signal
+`sentinel:stream`'s original backpressure gate (ADR-0022 "step 1") paused
+the producer whenever `TransactionStreamService::depth()` (raw `XLEN`)
+exceeded 800. Approximate `MAXLEN` trimming only removes entries as new
+ones are added — it does nothing in response to consumption. Once the
+stream has ever grown to ~1000 entries in its lifetime, `XLEN` stays
+pinned near that ceiling indefinitely, regardless of how completely the
+consumer group has caught up. The gate had nothing left to measure once
+that point was reached; it just permanently blocked the producer. Every
+transaction `sentinel:watch` was processing (odd, unfamiliar merchant
+names like "Blendz" and "Sandwich.net" that don't exist in the current
+`config('sentinel.simulation.merchants')`) turned out to be old backlog
+sitting in that near-1000-entry buffer from long before the current
+merchant profiles existed — not anything from this session.
+
+### Decision: Delete the XLEN Gate Rather Than Patch It
+ADR-0023's graduated consumer-lag backpressure (`XPENDING`-based
+`lag_warn`/`lag_pause`) already measures the thing that actually matters —
+real unacknowledged backlog — and sits two checks below the broken gate in
+the same loop. Removed the `XLEN` gate entirely instead of trying to
+recalibrate its threshold, since no threshold fixes a signal that doesn't
+correlate with backlog once `MAXLEN` trimming is in play. Also removed the
+now-dead `publish_pause_threshold`/`publish_pause_ms` config and the test
+that exercised the deleted gate. `TransactionStreamService::depth()`
+itself was left in place — it is not wrong, just not useful for this
+purpose — since it's still directly tested and cost nothing to keep.
+
+### Challenge: `TransactionProcessorService` Also Never Resets Once Started
+A smaller, related lesson: `sentinel_metrics_*` counters are plain Redis
+keys with no session boundary — `sentinel:reset-metrics` was never run
+this session, so the dashboard's "307" mixed weeks-old accumulated counts
+with the ~99 events actually processed by this session's worker. Not a
+bug, but a reminder that a stat looking static doesn't mean nothing is
+happening — cross-checking a command's own live log against the
+cumulative counter it feeds was what separated "no new activity" from
+"old data dominates the total."
+
+Verified after the fix: `sentinel:stream --limit=100` published all 100
+transactions immediately (zero pause messages, vs. zero *successful*
+publishes across ~16 minutes and 1973 pause messages before the fix).
+Upstash `default` namespace grew from 1 vector to 3+ during the drain;
+Postgres `transactions` table (cleared to 0 beforehand for a clean read)
+picked up 91 new rows within seconds of the run finishing.
+
+---
+
+## Phase 12 — Named Vector Namespaces, Retire Implicit Default (ADR-0026) — 2026-07-02
+Files: docs/adr/0026-named-vector-namespaces-retire-default.md, app/Services/VectorCacheService.php, app/Services/TransactionProcessorService.php, tests/Unit/VectorCacheServiceTest.php, tests/Unit/TransactionProcessorServiceTest.php, tests/Feature/WatchTransactionsTest.php, tests/Unit/Mcp/AnalyzeTransactionToolTest.php, README.md, CLAUDE.md
+
+While confirming the Ollama cutover's data in Upstash, only the `default`
+namespace was being checked, which is a symptom of a real design smell:
+the transaction semantic cache has lived in Upstash's implicit,
+unnamed default namespace since ADR-0008, while `policies` is explicitly
+named. With multi-tenancy and telemetry-namespace support already on the
+roadmap, an implicit exception to an otherwise-named-namespace convention
+only gets more confusing as more namespaces are added. Wrote ADR-0026 and
+retired the implicit-default code path entirely.
+
+### Decision: Delete the Bare Methods, Don't Just Add a Namespace Argument
+`VectorCacheService::search()`/`upsert()`/`delete()` (bare `/query`,
+`/upsert`, `/delete` — Upstash's implicit default namespace) are gone, not
+deprecated-in-place. Every caller now goes through `searchNamespace()`/
+`upsertNamespace()`/`deleteNamespace()` with an explicit namespace string.
+`TransactionProcessorService` gained `const NAMESPACE = 'transactions'`,
+matching `SentinelIngest`'s existing `const NAMESPACE = 'policies'`
+convention. Leaving the bare methods in place "just in case" would have
+preserved exactly the inconsistency this ADR exists to remove — a
+namespace with no name only stops being confusing once nothing can
+address it anymore.
+
+### Challenge: Return-Shape Mismatch Between the Old and New Methods
+`search()` returned a single best-match array or `null`. `searchNamespace()`
+returns a list of all matches at or above threshold. `TransactionProcessorService`
+now calls `searchNamespace($vector, self::NAMESPACE, $threshold, 1)` and
+takes `$results[0] ?? null` to reconstruct the old single-match contract —
+the threshold itself moved from a constructor-injected property on
+`VectorCacheService` (read once from config) to an explicit per-call
+argument, since the service is now purely a generic namespaced Upstash
+client with no cache-specific defaults baked in.
+
+### Challenge: The Mock/Fake Blast Radius Was Larger Than Expected
+Renaming two methods on a widely-mocked service touched four test files:
+`VectorCacheServiceTest` (own coverage, rewritten around the new
+namespaced methods and `transactions` namespace), `TransactionProcessorServiceTest`
+and `WatchTransactionsTest` (Mockery mocks of `VectorCacheService`, ~35
+occurrences across both — `shouldReceive('search')` → `shouldReceive('searchNamespace')`
+plus wrapping single-match returns in a list, `null` → `[]`), and
+`AnalyzeTransactionToolTest` (real `Http::fake()` against `*/query`/`*/upsert`,
+which stopped matching once the real HTTP calls moved to `/query/transactions`/
+`/upsert/transactions`). Caught the `WatchTransactionsTest` and
+`AnalyzeTransactionToolTest` regressions by running the full suite and
+diffing against a `git stash`-based baseline rather than assuming the
+directly-touched test files were the only blast radius — the same
+verification discipline established in Phase 10.
+
+Verified: full suite back to the pre-existing 2-4 flaky/unrelated
+failures (Phase 7 fingerprint entropy and merchant-config tests, plus an
+order-dependent `ArchTest` gap) with zero failures attributable to this
+change.

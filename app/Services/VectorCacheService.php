@@ -11,69 +11,10 @@ class VectorCacheService
 
     protected string $token;
 
-    protected float $threshold;
-
     public function __construct()
     {
         $this->baseUrl = config('services.upstash_vector.url');
         $this->token = config('services.upstash_vector.token');
-        $this->threshold = config('services.upstash_vector.similarity_threshold');
-    }
-
-    public function search(array $embedding, int $topK = 3): ?array
-    {
-        $response = Http::withToken($this->token)
-            ->timeout(5)
-            ->retry(2, 150, throw: false)
-            ->post("{$this->baseUrl}/query", [
-                'vector' => $embedding,
-                'topK' => $topK,
-                'includeMetadata' => true,
-            ]);
-
-        if (! $response->successful()) {
-            Log::warning('Vector cache search failed', [
-                'status' => $response->status(),
-                'body' => $response->body(),
-            ]);
-
-            return null;
-        }
-
-        $results = $response->json('result');
-
-        // Check if best match exceeds threshold
-        if (empty($results) || ! isset($results[0]['score']) || $results[0]['score'] < $this->threshold) {
-            return null;
-        }
-
-        return $results[0]; // Return best match
-    }
-
-    public function upsert(string $id, array $embedding, array $metadata): bool
-    {
-        $response = Http::withToken($this->token)
-            ->timeout(5)
-            ->retry(2, 150, throw: false)
-            ->post("{$this->baseUrl}/upsert", [
-                [
-                    'id' => $id,
-                    'vector' => $embedding,
-                    'metadata' => $metadata,
-                ],
-            ]);
-
-        if (! $response->successful()) {
-            Log::warning('Vector cache upsert failed', [
-                'id' => $id,
-                'status' => $response->status(),
-                'body' => $response->body(),
-            ]);
-
-            return false;
-        }
-
-        return true;
     }
 
     /**
@@ -154,15 +95,19 @@ class VectorCacheService
         return true;
     }
 
-    public function delete(string $id): bool
+    /**
+     * Delete a vector from a specific namespace.
+     */
+    public function deleteNamespace(string $id, string $namespace): bool
     {
         $response = Http::withToken($this->token)
             ->timeout(5)
             ->retry(2, 150, throw: false)
-            ->post("{$this->baseUrl}/delete", [$id]);
+            ->post("{$this->baseUrl}/delete/{$namespace}", [$id]);
 
         if (! $response->successful()) {
-            Log::warning('Vector cache delete failed', [
+            Log::warning('Vector namespace delete failed', [
+                'namespace' => $namespace,
                 'id' => $id,
                 'status' => $response->status(),
                 'body' => $response->body(),

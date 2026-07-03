@@ -15,11 +15,11 @@ uses(Tests\TestCase::class, RefreshDatabase::class);
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
 $baseTxn = [
-    'id'            => 'txn-unit-001',
-    'merchant'      => 'ACME Corp',
+    'id' => 'txn-unit-001',
+    'merchant' => 'ACME Corp',
     'merchant_name' => 'ACME Corp',
-    'amount'        => 150.00,
-    'currency'      => 'AUD',
+    'amount' => 150.00,
+    'currency' => 'AUD',
 ];
 
 $vector = array_fill(0, 1536, 0.1);
@@ -27,9 +27,9 @@ $vector = array_fill(0, 1536, 0.1);
 // ─── Mock builders ────────────────────────────────────────────────────────────
 
 function tps_processor(
-    EmbeddingService      $e,
+    EmbeddingService $e,
     ThreatAnalysisService $a,
-    VectorCacheService    $vc,
+    VectorCacheService $vc,
 ): TransactionProcessorService {
     return new TransactionProcessorService($e, $a, $vc);
 }
@@ -39,6 +39,7 @@ function tps_embeds(array $vector): EmbeddingService
     $m = Mockery::mock(EmbeddingService::class);
     $m->shouldReceive('createTransactionFingerprint')->andReturn('fp');
     $m->shouldReceive('embed')->andReturn($vector);
+
     return $m;
 }
 
@@ -46,40 +47,44 @@ function tps_embeddingFails(): EmbeddingService
 {
     $m = Mockery::mock(EmbeddingService::class);
     $m->shouldReceive('createTransactionFingerprint')
-      ->andThrow(new RuntimeException('Gemini quota exceeded'));
+        ->andThrow(new RuntimeException('Gemini quota exceeded'));
+
     return $m;
 }
 
 function tps_cacheHit(bool $isThreat): VectorCacheService
 {
     $m = Mockery::mock(VectorCacheService::class);
-    $m->shouldReceive('search')->andReturn([
-        'id'       => 'txn_cached_abc',
-        'score'    => 0.97,
+    $m->shouldReceive('searchNamespace')->andReturn([[
+        'id' => 'txn_cached_abc',
+        'score' => 0.97,
         'metadata' => [
             'analysis' => [
                 'isThreat' => $isThreat,
-                'message'  => $isThreat ? 'Cached: threat detected' : 'Layer 7 Clear: ACME Corp - OK',
+                'message' => $isThreat ? 'Cached: threat detected' : 'Layer 7 Clear: ACME Corp - OK',
             ],
         ],
-    ]);
-    $m->shouldNotReceive('upsert');
+    ]]);
+    $m->shouldNotReceive('upsertNamespace');
+
     return $m;
 }
 
 function tps_cacheMiss(): VectorCacheService
 {
     $m = Mockery::mock(VectorCacheService::class);
-    $m->shouldReceive('search')->andReturn(null);
-    $m->shouldReceive('upsert')->andReturn(true);
+    $m->shouldReceive('searchNamespace')->andReturn([]);
+    $m->shouldReceive('upsertNamespace')->andReturn(true);
+
     return $m;
 }
 
 function tps_cacheUnused(): VectorCacheService
 {
     $m = Mockery::mock(VectorCacheService::class);
-    $m->shouldNotReceive('search');
-    $m->shouldNotReceive('upsert');
+    $m->shouldNotReceive('searchNamespace');
+    $m->shouldNotReceive('upsertNamespace');
+
     return $m;
 }
 
@@ -87,6 +92,7 @@ function tps_analyzes(ThreatResult $result): ThreatAnalysisService
 {
     $m = Mockery::mock(ThreatAnalysisService::class);
     $m->shouldReceive('analyze')->andReturn($result);
+
     return $m;
 }
 
@@ -94,6 +100,7 @@ function tps_analyzerUnused(): ThreatAnalysisService
 {
     $m = Mockery::mock(ThreatAnalysisService::class);
     $m->shouldNotReceive('analyze');
+
     return $m;
 }
 
@@ -158,9 +165,9 @@ beforeEach(fn () => Cache::flush());
 
 it('returns the correct shape, source, and outcome for every pipeline path', function (
     Closure $factory,
-    string  $expectedSource,
-    bool    $expectedThreat,
-    string  $expectedMessage,
+    string $expectedSource,
+    bool $expectedThreat,
+    string $expectedMessage,
 ) use ($baseTxn) {
     tps_allowRedis();
 
@@ -218,7 +225,7 @@ it('increments sentinel_metrics_threat_count only when the result is a threat', 
 
     Mockery::close();
 })->with([
-    'threat'     => [true],
+    'threat' => [true],
     'not threat' => [false],
 ]);
 
@@ -226,15 +233,16 @@ it('increments sentinel_metrics_threat_count only when the result is a threat', 
 
 it('upserts threat_level "high" and isThreat true on a threatening cache miss', function () use ($baseTxn, $vector) {
     tps_allowRedis();
-    $threat    = ThreatResult::threat('High value', ['merchant' => 'ACME Corp', 'amount' => 500.00]);
-    $captured  = null;
+    $threat = ThreatResult::threat('High value', ['merchant' => 'ACME Corp', 'amount' => 500.00]);
+    $captured = null;
 
     $vectorCache = Mockery::mock(VectorCacheService::class);
-    $vectorCache->shouldReceive('search')->andReturn(null);
-    $vectorCache->shouldReceive('upsert')
+    $vectorCache->shouldReceive('searchNamespace')->andReturn([]);
+    $vectorCache->shouldReceive('upsertNamespace')
         ->once()
         ->andReturnUsing(function ($id, $vec, $meta) use (&$captured) {
             $captured = $meta;
+
             return true;
         });
 
@@ -247,15 +255,16 @@ it('upserts threat_level "high" and isThreat true on a threatening cache miss', 
 
 it('upserts threat_level "low" and isThreat false on a clear cache miss', function () use ($baseTxn, $vector) {
     tps_allowRedis();
-    $clear    = ThreatResult::clear(['merchant' => 'ACME Corp', 'amount' => 150.00]);
+    $clear = ThreatResult::clear(['merchant' => 'ACME Corp', 'amount' => 150.00]);
     $captured = null;
 
     $vectorCache = Mockery::mock(VectorCacheService::class);
-    $vectorCache->shouldReceive('search')->andReturn(null);
-    $vectorCache->shouldReceive('upsert')
+    $vectorCache->shouldReceive('searchNamespace')->andReturn([]);
+    $vectorCache->shouldReceive('upsertNamespace')
         ->once()
         ->andReturnUsing(function ($id, $vec, $meta) use (&$captured) {
             $captured = $meta;
+
             return true;
         });
 
@@ -269,15 +278,16 @@ it('upserts threat_level "low" and isThreat false on a clear cache miss', functi
 it('upserts the current policy_epoch with the analysis result', function () use ($baseTxn, $vector) {
     tps_allowRedis();
     Cache::put('sentinel_policy_epoch', 'epoch-abc123');
-    $clear    = ThreatResult::clear(['merchant' => 'ACME Corp', 'amount' => 150.00]);
+    $clear = ThreatResult::clear(['merchant' => 'ACME Corp', 'amount' => 150.00]);
     $captured = null;
 
     $vectorCache = Mockery::mock(VectorCacheService::class);
-    $vectorCache->shouldReceive('search')->andReturn(null);
-    $vectorCache->shouldReceive('upsert')
+    $vectorCache->shouldReceive('searchNamespace')->andReturn([]);
+    $vectorCache->shouldReceive('upsertNamespace')
         ->once()
         ->andReturnUsing(function ($id, $vec, $meta) use (&$captured) {
             $captured = $meta;
+
             return true;
         });
 
@@ -290,15 +300,16 @@ it('upserts the current policy_epoch with the analysis result', function () use 
 it('upserts null policy_epoch when no ingest has run', function () use ($baseTxn, $vector) {
     tps_allowRedis();
     // Cache is flushed in beforeEach — no epoch set
-    $clear    = ThreatResult::clear(['merchant' => 'ACME Corp', 'amount' => 150.00]);
+    $clear = ThreatResult::clear(['merchant' => 'ACME Corp', 'amount' => 150.00]);
     $captured = null;
 
     $vectorCache = Mockery::mock(VectorCacheService::class);
-    $vectorCache->shouldReceive('search')->andReturn(null);
-    $vectorCache->shouldReceive('upsert')
+    $vectorCache->shouldReceive('searchNamespace')->andReturn([]);
+    $vectorCache->shouldReceive('upsertNamespace')
         ->once()
         ->andReturnUsing(function ($id, $vec, $meta) use (&$captured) {
             $captured = $meta;
+
             return true;
         });
 
@@ -315,15 +326,15 @@ it('serves a cache hit when the stored epoch matches the current epoch', functio
     Cache::put('sentinel_policy_epoch', 'epoch-v1');
 
     $vectorCache = Mockery::mock(VectorCacheService::class);
-    $vectorCache->shouldReceive('search')->andReturn([
-        'id'    => 'txn_cached',
+    $vectorCache->shouldReceive('searchNamespace')->andReturn([[
+        'id' => 'txn_cached',
         'score' => 0.97,
         'metadata' => [
             'policy_epoch' => 'epoch-v1',
-            'analysis'     => ['isThreat' => false, 'message' => 'Layer 7 Clear'],
+            'analysis' => ['isThreat' => false, 'message' => 'Layer 7 Clear'],
         ],
-    ]);
-    $vectorCache->shouldNotReceive('upsert');
+    ]]);
+    $vectorCache->shouldNotReceive('upsertNamespace');
 
     $result = tps_processor(tps_embeds($vector), tps_analyzerUnused(), $vectorCache)->process($baseTxn);
 
@@ -337,18 +348,18 @@ it('re-analyzes and re-upserts when the cached epoch is stale', function () use 
     $clear = ThreatResult::clear(['merchant' => 'ACME Corp', 'amount' => 150.00]);
 
     $vectorCache = Mockery::mock(VectorCacheService::class);
-    $vectorCache->shouldReceive('search')->andReturn([
-        'id'    => 'txn_cached',
+    $vectorCache->shouldReceive('searchNamespace')->andReturn([[
+        'id' => 'txn_cached',
         'score' => 0.97,
         'metadata' => [
             'policy_epoch' => 'epoch-v1', // old epoch
-            'analysis'     => ['isThreat' => false, 'message' => 'Stale verdict'],
+            'analysis' => ['isThreat' => false, 'message' => 'Stale verdict'],
         ],
-    ]);
-    $vectorCache->shouldReceive('upsert')->once()->andReturn(true);
+    ]]);
+    $vectorCache->shouldReceive('upsertNamespace')->once()->andReturn(true);
 
     $analyzer = tps_analyzes($clear);
-    $result   = tps_processor(tps_embeds($vector), $analyzer, $vectorCache)->process($baseTxn);
+    $result = tps_processor(tps_embeds($vector), $analyzer, $vectorCache)->process($baseTxn);
 
     expect($result['source'])->toBe('cache_miss');
     Mockery::close();
@@ -359,15 +370,15 @@ it('serves a cache hit when no ingest has ever run (both epochs null)', function
     // No epoch in Cache (beforeEach flushes), no epoch in cached metadata
 
     $vectorCache = Mockery::mock(VectorCacheService::class);
-    $vectorCache->shouldReceive('search')->andReturn([
-        'id'    => 'txn_cached',
+    $vectorCache->shouldReceive('searchNamespace')->andReturn([[
+        'id' => 'txn_cached',
         'score' => 0.97,
         'metadata' => [
             // no policy_epoch key — pre-epoch entry
             'analysis' => ['isThreat' => false, 'message' => 'Layer 7 Clear'],
         ],
-    ]);
-    $vectorCache->shouldNotReceive('upsert');
+    ]]);
+    $vectorCache->shouldNotReceive('upsertNamespace');
 
     $result = tps_processor(tps_embeds($vector), tps_analyzerUnused(), $vectorCache)->process($baseTxn);
 
@@ -381,15 +392,15 @@ it('re-analyzes a pre-epoch entry once ingest has run', function () use ($baseTx
     $clear = ThreatResult::clear(['merchant' => 'ACME Corp', 'amount' => 150.00]);
 
     $vectorCache = Mockery::mock(VectorCacheService::class);
-    $vectorCache->shouldReceive('search')->andReturn([
-        'id'    => 'txn_cached',
+    $vectorCache->shouldReceive('searchNamespace')->andReturn([[
+        'id' => 'txn_cached',
         'score' => 0.97,
         'metadata' => [
             // no policy_epoch — entry predates the epoch feature
             'analysis' => ['isThreat' => false, 'message' => 'Old verdict without policy grounding'],
         ],
-    ]);
-    $vectorCache->shouldReceive('upsert')->once()->andReturn(true);
+    ]]);
+    $vectorCache->shouldReceive('upsertNamespace')->once()->andReturn(true);
 
     $result = tps_processor(tps_embeds($vector), tps_analyzes($clear), $vectorCache)->process($baseTxn);
 
@@ -469,13 +480,14 @@ it('records no metrics and no Transaction when observe is false (cache miss)', f
 
 it('still upserts into the vector cache when observe is false', function () use ($baseTxn, $vector) {
     Redis::shouldReceive('executeRaw')->never();
-    $clear    = ThreatResult::clear(['merchant' => 'ACME Corp', 'amount' => 150.00]);
+    $clear = ThreatResult::clear(['merchant' => 'ACME Corp', 'amount' => 150.00]);
     $upserted = false;
 
     $vectorCache = Mockery::mock(VectorCacheService::class);
-    $vectorCache->shouldReceive('search')->andReturn(null);
-    $vectorCache->shouldReceive('upsert')->once()->andReturnUsing(function () use (&$upserted) {
+    $vectorCache->shouldReceive('searchNamespace')->andReturn([]);
+    $vectorCache->shouldReceive('upsertNamespace')->once()->andReturnUsing(function () use (&$upserted) {
         $upserted = true;
+
         return true;
     });
 
@@ -489,7 +501,7 @@ it('still upserts into the vector cache when observe is false', function () use 
 
 it('falls back to merchant_name when the merchant field is absent', function () use ($vector) {
     tps_allowRedis();
-    $txn   = ['id' => 'txn-name-fb', 'merchant_name' => 'Fallback Corp', 'amount' => 25.00, 'currency' => 'USD'];
+    $txn = ['id' => 'txn-name-fb', 'merchant_name' => 'Fallback Corp', 'amount' => 25.00, 'currency' => 'USD'];
     $clear = ThreatResult::clear(['merchant' => 'Fallback Corp', 'amount' => 25.00]);
 
     tps_processor(tps_embeds($vector), tps_analyzes($clear), tps_cacheMiss())->process($txn);
@@ -500,7 +512,7 @@ it('falls back to merchant_name when the merchant field is absent', function () 
 
 it('stores null amount in the DB when the transaction has no amount field', function () use ($vector) {
     tps_allowRedis();
-    $txn   = ['id' => 'txn-no-amt', 'merchant' => 'ACME Corp', 'currency' => 'EUR'];
+    $txn = ['id' => 'txn-no-amt', 'merchant' => 'ACME Corp', 'currency' => 'EUR'];
     $clear = ThreatResult::clear(['merchant' => 'ACME Corp', 'amount' => 0]);
 
     tps_processor(tps_embeds($vector), tps_analyzes($clear), tps_cacheMiss())->process($txn);
@@ -511,7 +523,7 @@ it('stores null amount in the DB when the transaction has no amount field', func
 
 it('auto-generates a txn_id when none is provided', function () use ($vector) {
     tps_allowRedis();
-    $txn   = ['merchant' => 'No ID Corp', 'amount' => 10.00, 'currency' => 'AUD'];
+    $txn = ['merchant' => 'No ID Corp', 'amount' => 10.00, 'currency' => 'AUD'];
     $clear = ThreatResult::clear(['merchant' => 'No ID Corp', 'amount' => 10.00]);
 
     tps_processor(tps_embeds($vector), tps_analyzes($clear), tps_cacheMiss())->process($txn);

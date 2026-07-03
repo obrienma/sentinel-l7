@@ -10,11 +10,11 @@ $fakeVector = array_fill(0, 1536, 0.1);
 
 beforeEach(function () {
     config([
-        'services.gemini.api_key'              => 'test-key',
-        'services.upstash_vector.url'          => 'https://fake-vector.upstash.io',
-        'services.upstash_vector.token'        => 'fake-token',
+        'services.gemini.api_key' => 'test-key',
+        'services.upstash_vector.url' => 'https://fake-vector.upstash.io',
+        'services.upstash_vector.token' => 'fake-token',
         'services.upstash_vector.similarity_threshold' => 0.95,
-        'sentinel.thresholds.high_risk'        => 400.00,
+        'sentinel.thresholds.high_risk' => 400.00,
     ]);
     // observe: false is passed by AnalyzeTransaction — metrics and feed are NOT written,
     // so no Redis/Cache mocking is needed here.
@@ -25,9 +25,9 @@ beforeEach(function () {
 it('returns a cache_hit result when the vector cache has a matching entry', function () use ($fakeVector) {
     Http::fake([
         '*embedContent*' => Http::response(['embedding' => ['values' => $fakeVector]], 200),
-        '*/query'        => Http::response([
+        '*/query/transactions' => Http::response([
             'result' => [[
-                'id'    => 'txn_abc',
+                'id' => 'txn_abc',
                 'score' => 0.97,
                 'metadata' => [
                     'analysis' => ['isThreat' => false, 'message' => 'Layer 7 Clear: Shell Gas - OK'],
@@ -37,7 +37,7 @@ it('returns a cache_hit result when the vector cache has a matching entry', func
     ]);
 
     $response = SentinelServer::tool(AnalyzeTransaction::class, [
-        'amount'   => 50.00,
+        'amount' => 50.00,
         'currency' => 'USD',
         'merchant' => 'Shell Gas',
     ]);
@@ -50,12 +50,12 @@ it('returns a cache_hit result when the vector cache has a matching entry', func
 it('returns is_threat true for a high-value transaction on cache miss', function () use ($fakeVector) {
     Http::fake([
         '*embedContent*' => Http::response(['embedding' => ['values' => $fakeVector]], 200),
-        '*/query'        => Http::response(['result' => []], 200),
-        '*/upsert'       => Http::response(['result' => 'Success'], 200),
+        '*/query/transactions' => Http::response(['result' => []], 200),
+        '*/upsert/transactions' => Http::response(['result' => 'Success'], 200),
     ]);
 
     $response = SentinelServer::tool(AnalyzeTransaction::class, [
-        'amount'   => 9000.00,
+        'amount' => 9000.00,
         'currency' => 'USD',
         'merchant' => 'Casino Royale',
     ]);
@@ -66,12 +66,12 @@ it('returns is_threat true for a high-value transaction on cache miss', function
 it('returns is_threat false for a low-value transaction on cache miss', function () use ($fakeVector) {
     Http::fake([
         '*embedContent*' => Http::response(['embedding' => ['values' => $fakeVector]], 200),
-        '*/query'        => Http::response(['result' => []], 200),
-        '*/upsert'       => Http::response(['result' => 'Success'], 200),
+        '*/query/transactions' => Http::response(['result' => []], 200),
+        '*/upsert/transactions' => Http::response(['result' => 'Success'], 200),
     ]);
 
     $response = SentinelServer::tool(AnalyzeTransaction::class, [
-        'amount'   => 12.50,
+        'amount' => 12.50,
         'currency' => 'CAD',
         'merchant' => 'Tim Hortons',
     ]);
@@ -87,7 +87,7 @@ it('still returns a result when embedding fails (fallback path)', function () {
     ]);
 
     $response = SentinelServer::tool(AnalyzeTransaction::class, [
-        'amount'   => 150.00,
+        'amount' => 150.00,
         'currency' => 'USD',
         'merchant' => 'Walmart',
     ]);
@@ -108,7 +108,7 @@ it('returns a validation error when amount is missing', function () {
 
 it('returns a validation error when currency is missing', function () {
     $response = SentinelServer::tool(AnalyzeTransaction::class, [
-        'amount'   => 50.00,
+        'amount' => 50.00,
         'merchant' => 'Shell Gas',
     ]);
 
@@ -117,7 +117,7 @@ it('returns a validation error when currency is missing', function () {
 
 it('returns a validation error when merchant is missing', function () {
     $response = SentinelServer::tool(AnalyzeTransaction::class, [
-        'amount'   => 50.00,
+        'amount' => 50.00,
         'currency' => 'USD',
     ]);
 
@@ -126,7 +126,7 @@ it('returns a validation error when merchant is missing', function () {
 
 it('returns a validation error when amount is negative', function () {
     $response = SentinelServer::tool(AnalyzeTransaction::class, [
-        'amount'   => -5.00,
+        'amount' => -5.00,
         'currency' => 'USD',
         'merchant' => 'Shell Gas',
     ]);
@@ -139,12 +139,12 @@ it('returns a validation error when amount is negative', function () {
 it('response contains source, is_threat, message and elapsed_ms keys', function () use ($fakeVector) {
     Http::fake([
         '*embedContent*' => Http::response(['embedding' => ['values' => $fakeVector]], 200),
-        '*/query'        => Http::response(['result' => []], 200),
-        '*/upsert'       => Http::response(['result' => 'Success'], 200),
+        '*/query/transactions' => Http::response(['result' => []], 200),
+        '*/upsert/transactions' => Http::response(['result' => 'Success'], 200),
     ]);
 
     $response = SentinelServer::tool(AnalyzeTransaction::class, [
-        'amount'   => 25.00,
+        'amount' => 25.00,
         'currency' => 'USD',
         'merchant' => 'Starbucks',
     ]);

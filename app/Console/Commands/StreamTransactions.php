@@ -1,4 +1,5 @@
 <?php
+
 namespace App\Console\Commands;
 
 use App\Services\TransactionStreamService;
@@ -8,7 +9,7 @@ class StreamTransactions extends Command
 {
     protected $signature = 'sentinel:stream {--speed=1000} {--limit=10}';
 
-    protected $description = "Stream demo transactions to Redis Streams";
+    protected $description = 'Stream demo transactions to Redis Streams';
 
     private bool $shouldStop = false;
 
@@ -17,33 +18,22 @@ class StreamTransactions extends Command
         if (extension_loaded('pcntl')) {
             pcntl_async_signals(true);
             pcntl_signal(SIGTERM, fn () => $this->shouldStop = true);
-            pcntl_signal(SIGINT,  fn () => $this->shouldStop = true);
+            pcntl_signal(SIGINT, fn () => $this->shouldStop = true);
         }
 
-        $limit        = (int) $this->option('limit');
-        $count        = 0;
-        $threshold    = (int) config('sentinel.backpressure.publish_pause_threshold');
-        $pauseMs      = (int) config('sentinel.backpressure.publish_pause_ms');
-        $lagWarn      = (int) config('sentinel.backpressure.lag_warn');
-        $lagPause     = (int) config('sentinel.backpressure.lag_pause');
+        $limit = (int) $this->option('limit');
+        $count = 0;
+        $lagWarn = (int) config('sentinel.backpressure.lag_warn');
+        $lagPause = (int) config('sentinel.backpressure.lag_pause');
         $lagWarnSleep = (int) config('sentinel.backpressure.lag_warn_sleep_ms');
-        $lagPollMs    = (int) config('sentinel.backpressure.lag_pause_poll_ms');
+        $lagPollMs = (int) config('sentinel.backpressure.lag_pause_poll_ms');
 
-        $this->info("Sentinel-L7: Monitoring layers" . ($limit > 0 ? " (Limit: $limit)" : ""));
+        $this->info('Sentinel-L7: Monitoring layers'.($limit > 0 ? " (Limit: $limit)" : ''));
 
         foreach ($stream->generate() as $transaction) {
             if ($this->shouldStop) {
-                $this->info("Signal received. Powering down.");
+                $this->info('Signal received. Powering down.');
                 break;
-            }
-
-            while ($stream->depth() > $threshold) {
-                $this->warn("Stream depth above {$threshold}, pausing publisher for {$pauseMs}ms");
-                usleep($pauseMs * 1000);
-                if ($this->shouldStop) {
-                    $this->info("Signal received. Powering down.");
-                    break 2;
-                }
             }
 
             $lag = $stream->readLagKey();
@@ -53,7 +43,7 @@ class StreamTransactions extends Command
                 while ($stream->readLagKey() > $lagPause) {
                     usleep($lagPollMs * 1000);
                     if ($this->shouldStop) {
-                        $this->info("Signal received. Powering down.");
+                        $this->info('Signal received. Powering down.');
                         break 2;
                     }
                 }
@@ -70,11 +60,11 @@ class StreamTransactions extends Command
             $count++;
 
             if ($limit > 0 && $count >= $limit) {
-                $this->info("Limit reached. Powering down.");
+                $this->info('Limit reached. Powering down.');
                 break;
             }
 
-            usleep((int)$this->option('speed') * 1000);
+            usleep((int) $this->option('speed') * 1000);
         }
     }
 }

@@ -24,14 +24,14 @@ beforeEach(fn () => LRedis::shouldReceive('executeRaw')->andReturn(1)->byDefault
 function fakeStreamMessage(array $overrides = []): array
 {
     $data = array_merge([
-        'id'            => 'txn-test-1',
-        'merchant'      => 'Starbucks',
+        'id' => 'txn-test-1',
+        'merchant' => 'Starbucks',
         'merchant_name' => 'Starbucks',
-        'amount'        => 12.50,
-        'currency'      => 'USD',
-        'type'          => 'purchase',
-        'category'      => 'coffee',
-        'timestamp'     => '2026-01-01T09:00:00+00:00',
+        'amount' => 12.50,
+        'currency' => 'USD',
+        'type' => 'purchase',
+        'category' => 'coffee',
+        'timestamp' => '2026-01-01T09:00:00+00:00',
     ], $overrides);
 
     return ['1-0', ['data', json_encode($data)]];
@@ -83,8 +83,8 @@ function runWatcher(\Tests\TestCase $test): void
 
 it('skips the analyzer on a cache hit', function () {
     $cachedResult = [
-        'id'       => 'txn_old_abc',
-        'score'    => 0.97,
+        'id' => 'txn_old_abc',
+        'score' => 0.97,
         'metadata' => [
             'analysis' => ['isThreat' => false, 'message' => 'Layer 7 Clear: Starbucks - OK'],
         ],
@@ -97,8 +97,8 @@ it('skips the analyzer on a cache hit', function () {
     $embedding->shouldReceive('embed')->once()->andReturn($fakeVector);
 
     $vectorCache = Mockery::mock(VectorCacheService::class);
-    $vectorCache->shouldReceive('search')->once()->with($fakeVector)->andReturn($cachedResult);
-    $vectorCache->shouldNotReceive('upsert');
+    $vectorCache->shouldReceive('searchNamespace')->once()->with($fakeVector, 'transactions', Mockery::any(), 1)->andReturn([$cachedResult]);
+    $vectorCache->shouldNotReceive('upsertNamespace');
 
     $analyzer = Mockery::mock(ThreatAnalysisService::class);
     $analyzer->shouldNotReceive('analyze');
@@ -122,11 +122,11 @@ it('increments the cache_hit metric on a hit', function () {
     $embedding->shouldReceive('embed')->andReturn($fakeVector);
 
     $vectorCache = Mockery::mock(VectorCacheService::class);
-    $vectorCache->shouldReceive('search')->andReturn([
-        'id'       => 'txn_old',
-        'score'    => 0.98,
+    $vectorCache->shouldReceive('searchNamespace')->andReturn([[
+        'id' => 'txn_old',
+        'score' => 0.98,
         'metadata' => ['analysis' => ['isThreat' => false, 'message' => 'OK']],
-    ]);
+    ]]);
 
     $analyzer = Mockery::mock(ThreatAnalysisService::class);
     $analyzer->shouldNotReceive('analyze');
@@ -151,13 +151,14 @@ it('calls the analyzer and upserts the result on a cache miss', function () {
     $embedding->shouldReceive('embed')->once()->andReturn($fakeVector);
 
     $vectorCache = Mockery::mock(VectorCacheService::class);
-    $vectorCache->shouldReceive('search')->once()->with($fakeVector)->andReturn(null);
-    $vectorCache->shouldReceive('upsert')
+    $vectorCache->shouldReceive('searchNamespace')->once()->with($fakeVector, 'transactions', Mockery::any(), 1)->andReturn([]);
+    $vectorCache->shouldReceive('upsertNamespace')
         ->once()
         ->with(
-            Mockery::on(fn($id) => str_starts_with($id, 'txn_')),
+            Mockery::on(fn ($id) => str_starts_with($id, 'txn_')),
             $fakeVector,
-            Mockery::on(fn($meta) => isset($meta['analysis']['isThreat']) && isset($meta['threat_level']))
+            Mockery::on(fn ($meta) => isset($meta['analysis']['isThreat']) && isset($meta['threat_level'])),
+            'transactions'
         );
 
     $analyzer = Mockery::mock(ThreatAnalysisService::class);
@@ -184,8 +185,8 @@ it('increments the cache_miss metric on a miss', function () {
     $embedding->shouldReceive('embed')->andReturn($fakeVector);
 
     $vectorCache = Mockery::mock(VectorCacheService::class);
-    $vectorCache->shouldReceive('search')->andReturn(null);
-    $vectorCache->shouldReceive('upsert')->andReturn(true);
+    $vectorCache->shouldReceive('searchNamespace')->andReturn([]);
+    $vectorCache->shouldReceive('upsertNamespace')->andReturn(true);
 
     $analyzer = Mockery::mock(ThreatAnalysisService::class);
     $analyzer->shouldReceive('analyze')
@@ -209,13 +210,14 @@ it('upserts threat_level as "high" when the result is a threat', function () {
     $embedding->shouldReceive('embed')->andReturn($fakeVector);
 
     $vectorCache = Mockery::mock(VectorCacheService::class);
-    $vectorCache->shouldReceive('search')->andReturn(null);
-    $vectorCache->shouldReceive('upsert')
+    $vectorCache->shouldReceive('searchNamespace')->andReturn([]);
+    $vectorCache->shouldReceive('upsertNamespace')
         ->once()
         ->with(
             Mockery::any(),
             $fakeVector,
-            Mockery::on(fn($meta) => $meta['threat_level'] === 'high' && $meta['analysis']['isThreat'] === true)
+            Mockery::on(fn ($meta) => $meta['threat_level'] === 'high' && $meta['analysis']['isThreat'] === true),
+            'transactions'
         );
 
     $analyzer = Mockery::mock(ThreatAnalysisService::class);
@@ -241,8 +243,8 @@ it('falls back to direct analysis when the embedding call fails', function () {
     $embedding->shouldReceive('embed')->andThrow(new \RuntimeException('Gemini embedding failed: quota exceeded'));
 
     $vectorCache = Mockery::mock(VectorCacheService::class);
-    $vectorCache->shouldNotReceive('search');
-    $vectorCache->shouldNotReceive('upsert');
+    $vectorCache->shouldNotReceive('searchNamespace');
+    $vectorCache->shouldNotReceive('upsertNamespace');
 
     $analyzer = Mockery::mock(ThreatAnalysisService::class);
     $analyzer->shouldReceive('analyze')
@@ -266,7 +268,7 @@ it('increments the fallback metric when the vector path throws', function () {
     $embedding->shouldReceive('embed')->andThrow(new \RuntimeException('network error'));
 
     $vectorCache = Mockery::mock(VectorCacheService::class);
-    $vectorCache->shouldNotReceive('search');
+    $vectorCache->shouldNotReceive('searchNamespace');
 
     $analyzer = Mockery::mock(ThreatAnalysisService::class);
     $analyzer->shouldReceive('analyze')
@@ -290,8 +292,8 @@ it('falls back when the vector search itself throws', function () {
     $embedding->shouldReceive('embed')->andReturn($fakeVector);
 
     $vectorCache = Mockery::mock(VectorCacheService::class);
-    $vectorCache->shouldReceive('search')->andThrow(new \RuntimeException('Upstash timeout'));
-    $vectorCache->shouldNotReceive('upsert');
+    $vectorCache->shouldReceive('searchNamespace')->andThrow(new \RuntimeException('Upstash timeout'));
+    $vectorCache->shouldNotReceive('upsertNamespace');
 
     $analyzer = Mockery::mock(ThreatAnalysisService::class);
     $analyzer->shouldReceive('analyze')
@@ -319,12 +321,12 @@ it('displays a cached threat result on cache hit', function () {
     $embedding->shouldReceive('embed')->andReturn($fakeVector);
 
     $vectorCache = Mockery::mock(VectorCacheService::class);
-    $vectorCache->shouldReceive('search')->andReturn([
-        'id'       => 'txn_threat_cached',
-        'score'    => 0.99,
+    $vectorCache->shouldReceive('searchNamespace')->andReturn([[
+        'id' => 'txn_threat_cached',
+        'score' => 0.99,
         'metadata' => ['analysis' => ['isThreat' => true, 'message' => 'THREAT: Suspicious deposit']],
-    ]);
-    $vectorCache->shouldNotReceive('upsert');
+    ]]);
+    $vectorCache->shouldNotReceive('upsertNamespace');
 
     $analyzer = Mockery::mock(ThreatAnalysisService::class);
     $analyzer->shouldNotReceive('analyze');
@@ -346,8 +348,8 @@ it('falls back when fingerprint creation throws', function () {
         ->andThrow(new \RuntimeException('Bad transaction data'));
 
     $vectorCache = Mockery::mock(VectorCacheService::class);
-    $vectorCache->shouldNotReceive('search');
-    $vectorCache->shouldNotReceive('upsert');
+    $vectorCache->shouldNotReceive('searchNamespace');
+    $vectorCache->shouldNotReceive('upsertNamespace');
 
     $analyzer = Mockery::mock(ThreatAnalysisService::class);
     $analyzer->shouldReceive('analyze')
@@ -373,8 +375,8 @@ it('falls back when upsert throws during cache miss', function () {
     $embedding->shouldReceive('embed')->andReturn($fakeVector);
 
     $vectorCache = Mockery::mock(VectorCacheService::class);
-    $vectorCache->shouldReceive('search')->andReturn(null);
-    $vectorCache->shouldReceive('upsert')->andThrow(new \RuntimeException('Upstash write error'));
+    $vectorCache->shouldReceive('searchNamespace')->andReturn([]);
+    $vectorCache->shouldReceive('upsertNamespace')->andThrow(new \RuntimeException('Upstash write error'));
 
     $analyzer = Mockery::mock(ThreatAnalysisService::class);
     $analyzer->shouldReceive('analyze')
@@ -397,11 +399,11 @@ it('handles transactions with missing optional fields gracefully', function () {
 
     // Transaction with only 'id' and 'amount' — no merchant_name, no currency
     $minimalMessage = fakeStreamMessage([
-        'id'            => 'txn-minimal',
-        'merchant'      => 'Unknown',
+        'id' => 'txn-minimal',
+        'merchant' => 'Unknown',
         'merchant_name' => null,
-        'amount'        => 5.00,
-        'currency'      => null,
+        'amount' => 5.00,
+        'currency' => null,
     ]);
 
     $calls = 0;
@@ -413,7 +415,9 @@ it('handles transactions with missing optional fields gracefully', function () {
     $stream->shouldReceive('writeLagKey')->andReturnNull();
     $stream->shouldReceive('readGroup')->andReturnUsing(function () use (&$calls, $minimalMessage) {
         $calls++;
-        if ($calls === 1) return ['messages' => [$minimalMessage]];
+        if ($calls === 1) {
+            return ['messages' => [$minimalMessage]];
+        }
         throw new \RuntimeException('__test_stop__');
     });
 
@@ -422,8 +426,8 @@ it('handles transactions with missing optional fields gracefully', function () {
     $embedding->shouldReceive('embed')->andReturn($fakeVector);
 
     $vectorCache = Mockery::mock(VectorCacheService::class);
-    $vectorCache->shouldReceive('search')->andReturn(null);
-    $vectorCache->shouldReceive('upsert')->andReturn(true);
+    $vectorCache->shouldReceive('searchNamespace')->andReturn([]);
+    $vectorCache->shouldReceive('upsertNamespace')->andReturn(true);
 
     $analyzer = Mockery::mock(ThreatAnalysisService::class);
     $analyzer->shouldReceive('analyze')
@@ -450,8 +454,10 @@ it('pushes a transaction entry to the redis feed on a cache hit', function () {
         ->with(Mockery::on(function ($args) use (&$lpushPayload) {
             if ($args[0] === 'LPUSH') {
                 $lpushPayload = json_decode($args[2], true);
+
                 return true;
             }
+
             return true; // allow LTRIM through
         }))
         ->twice(); // LPUSH + LTRIM
@@ -461,11 +467,11 @@ it('pushes a transaction entry to the redis feed on a cache hit', function () {
     $embedding->shouldReceive('embed')->andReturn($fakeVector);
 
     $vectorCache = Mockery::mock(VectorCacheService::class);
-    $vectorCache->shouldReceive('search')->andReturn([
-        'id'       => 'txn_old',
-        'score'    => 0.97,
+    $vectorCache->shouldReceive('searchNamespace')->andReturn([[
+        'id' => 'txn_old',
+        'score' => 0.97,
         'metadata' => ['analysis' => ['isThreat' => false, 'message' => 'Layer 7 Clear: Starbucks - OK']],
-    ]);
+    ]]);
 
     $analyzer = Mockery::mock(ThreatAnalysisService::class);
     $analyzer->shouldNotReceive('analyze');
@@ -494,6 +500,7 @@ it('records is_threat true in the feed for a cached threat', function () {
             if ($args[0] === 'LPUSH') {
                 $lpushPayload = json_decode($args[2], true);
             }
+
             return true;
         }))
         ->twice();
@@ -503,11 +510,11 @@ it('records is_threat true in the feed for a cached threat', function () {
     $embedding->shouldReceive('embed')->andReturn($fakeVector);
 
     $vectorCache = Mockery::mock(VectorCacheService::class);
-    $vectorCache->shouldReceive('search')->andReturn([
-        'id'       => 'txn_threat',
-        'score'    => 0.99,
+    $vectorCache->shouldReceive('searchNamespace')->andReturn([[
+        'id' => 'txn_threat',
+        'score' => 0.99,
         'metadata' => ['analysis' => ['isThreat' => true, 'message' => 'High value transaction']],
-    ]);
+    ]]);
 
     $analyzer = Mockery::mock(ThreatAnalysisService::class);
     $analyzer->shouldNotReceive('analyze');
@@ -534,6 +541,7 @@ it('pushes a transaction entry to the redis feed on a cache miss', function () {
             if ($args[0] === 'LPUSH') {
                 $lpushPayload = json_decode($args[2], true);
             }
+
             return true;
         }))
         ->twice();
@@ -543,8 +551,8 @@ it('pushes a transaction entry to the redis feed on a cache miss', function () {
     $embedding->shouldReceive('embed')->andReturn($fakeVector);
 
     $vectorCache = Mockery::mock(VectorCacheService::class);
-    $vectorCache->shouldReceive('search')->andReturn(null);
-    $vectorCache->shouldReceive('upsert')->andReturn(true);
+    $vectorCache->shouldReceive('searchNamespace')->andReturn([]);
+    $vectorCache->shouldReceive('upsertNamespace')->andReturn(true);
 
     $analyzer = Mockery::mock(ThreatAnalysisService::class);
     $analyzer->shouldReceive('analyze')
@@ -570,6 +578,7 @@ it('pushes a transaction entry to the redis feed on the fallback path', function
             if ($args[0] === 'LPUSH') {
                 $lpushPayload = json_decode($args[2], true);
             }
+
             return true;
         }))
         ->twice();
@@ -578,7 +587,7 @@ it('pushes a transaction entry to the redis feed on the fallback path', function
     $embedding->shouldReceive('createTransactionFingerprint')->andThrow(new \RuntimeException('Bad data'));
 
     $vectorCache = Mockery::mock(VectorCacheService::class);
-    $vectorCache->shouldNotReceive('search');
+    $vectorCache->shouldNotReceive('searchNamespace');
 
     $analyzer = Mockery::mock(ThreatAnalysisService::class);
     $analyzer->shouldReceive('analyze')
@@ -603,6 +612,7 @@ it('trims the feed list to FEED_LENGTH after each push', function () {
             if ($args[0] === 'LTRIM') {
                 $ltrimArgs = $args;
             }
+
             return true;
         }))
         ->twice();
@@ -614,8 +624,8 @@ it('trims the feed list to FEED_LENGTH after each push', function () {
     $embedding->shouldReceive('embed')->andReturn($fakeVector);
 
     $vectorCache = Mockery::mock(VectorCacheService::class);
-    $vectorCache->shouldReceive('search')->andReturn(null);
-    $vectorCache->shouldReceive('upsert')->andReturn(true);
+    $vectorCache->shouldReceive('searchNamespace')->andReturn([]);
+    $vectorCache->shouldReceive('upsertNamespace')->andReturn(true);
 
     $analyzer = Mockery::mock(ThreatAnalysisService::class);
     $analyzer->shouldReceive('analyze')
@@ -648,10 +658,12 @@ it('increments metrics for each transaction independently', function () {
     $stream->shouldReceive('writeLagKey')->andReturnNull();
     $stream->shouldReceive('readGroup')->andReturnUsing(function () use (&$calls) {
         $calls++;
-        if ($calls === 1) return ['messages' => [
-            fakeStreamMessage(['id' => 'txn-hit-1']),
-            fakeStreamMessage(['id' => 'txn-miss-1']),
-        ]];
+        if ($calls === 1) {
+            return ['messages' => [
+                fakeStreamMessage(['id' => 'txn-hit-1']),
+                fakeStreamMessage(['id' => 'txn-miss-1']),
+            ]];
+        }
         throw new \RuntimeException('__test_stop__');
     });
 
@@ -662,14 +674,15 @@ it('increments metrics for each transaction independently', function () {
 
     $vectorCalls = 0;
     $vectorCache = Mockery::mock(VectorCacheService::class);
-    $vectorCache->shouldReceive('search')->andReturnUsing(function () use (&$vectorCalls) {
+    $vectorCache->shouldReceive('searchNamespace')->andReturnUsing(function () use (&$vectorCalls) {
         $vectorCalls++;
         if ($vectorCalls === 1) {
-            return ['id' => 'cached', 'score' => 0.99, 'metadata' => ['analysis' => ['isThreat' => false, 'message' => 'OK']]];
+            return [['id' => 'cached', 'score' => 0.99, 'metadata' => ['analysis' => ['isThreat' => false, 'message' => 'OK']]]];
         }
-        return null;
+
+        return [];
     });
-    $vectorCache->shouldReceive('upsert')->andReturn(true);
+    $vectorCache->shouldReceive('upsertNamespace')->andReturn(true);
 
     $analyzer = Mockery::mock(ThreatAnalysisService::class);
     $analyzer->shouldReceive('analyze')
@@ -699,6 +712,7 @@ it('calls autoClaim before readGroup on every loop iteration', function () {
     $stream->shouldReceive('writeLagKey')->andReturnNull();
     $stream->shouldReceive('autoClaim')->andReturnUsing(function () use (&$order) {
         $order[] = 'autoClaim';
+
         return [];
     });
     $stream->shouldReceive('readGroup')->andReturnUsing(function () use (&$order) {
@@ -729,7 +743,9 @@ it('acks a successfully processed new message', function () {
     $calls = 0;
     $stream->shouldReceive('readGroup')->andReturnUsing(function () use (&$calls) {
         $calls++;
-        if ($calls === 1) return ['messages' => [fakeStreamMessage()]];
+        if ($calls === 1) {
+            return ['messages' => [fakeStreamMessage()]];
+        }
         throw new \RuntimeException('__test_stop__');
     });
 
@@ -740,11 +756,11 @@ it('acks a successfully processed new message', function () {
     $embedding->shouldReceive('embed')->andReturn($fakeVector);
 
     $vectorCache = Mockery::mock(VectorCacheService::class);
-    $vectorCache->shouldReceive('search')->andReturn([
-        'id'       => 'txn_old',
-        'score'    => 0.98,
+    $vectorCache->shouldReceive('searchNamespace')->andReturn([[
+        'id' => 'txn_old',
+        'score' => 0.98,
         'metadata' => ['analysis' => ['isThreat' => false, 'message' => 'OK']],
-    ]);
+    ]]);
 
     $analyzer = Mockery::mock(ThreatAnalysisService::class);
 
@@ -776,7 +792,12 @@ it('dead-letters a reclaimed message whose delivery count exceeds the limit', fu
     $stream->shouldReceive('writeLagKey')->andReturnNull();
     $stream->shouldReceive('autoClaim')->andReturnUsing(function () use ($orphan) {
         static $first = true;
-        if ($first) { $first = false; return [$orphan]; }
+        if ($first) {
+            $first = false;
+
+            return [$orphan];
+        }
+
         return [];
     });
     $stream->shouldReceive('deliveryCount')->with('1-0')->andReturn(5);
@@ -792,7 +813,7 @@ it('dead-letters a reclaimed message whose delivery count exceeds the limit', fu
     $embedding->shouldNotReceive('createTransactionFingerprint');
 
     $vectorCache = Mockery::mock(VectorCacheService::class);
-    $vectorCache->shouldNotReceive('search');
+    $vectorCache->shouldNotReceive('searchNamespace');
 
     $analyzer = Mockery::mock(ThreatAnalysisService::class);
     $analyzer->shouldNotReceive('analyze');
@@ -829,7 +850,9 @@ it('writes the pending count to the lag key after every readGroup cycle', functi
     $calls = 0;
     $stream->shouldReceive('readGroup')->andReturnUsing(function () use (&$calls) {
         $calls++;
-        if ($calls === 1) return ['messages' => [fakeStreamMessage()]];
+        if ($calls === 1) {
+            return ['messages' => [fakeStreamMessage()]];
+        }
         throw new \RuntimeException('__test_stop__');
     });
 
@@ -839,8 +862,8 @@ it('writes the pending count to the lag key after every readGroup cycle', functi
     $embedding->shouldReceive('embed')->andReturn($fakeVector);
 
     $vectorCache = Mockery::mock(VectorCacheService::class);
-    $vectorCache->shouldReceive('search')->andReturn(null);
-    $vectorCache->shouldReceive('upsert')->andReturnNull();
+    $vectorCache->shouldReceive('searchNamespace')->andReturn([]);
+    $vectorCache->shouldReceive('upsertNamespace')->andReturnNull();
 
     $analyzer = Mockery::mock(ThreatAnalysisService::class);
     $analyzer->shouldReceive('analyze')

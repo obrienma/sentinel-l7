@@ -37,11 +37,11 @@ Three long-running processes form the production system:
 Both workers run an `XAUTOCLAIM` pass at the top of every loop iteration — recovery is distributed across the pool, no dedicated reclaimer daemon (ADR-0022). `composer dev` starts all except `sentinel:watch` (transactions). Run `sentinel:watch` manually when testing the transaction pipeline alongside `sentinel:stream`.
 
 **Per-transaction pipeline (worker):**
-1. Embed transaction fingerprint → Gemini embedding API → 1536-dim vector
-2. Vector search (Upstash, ns:`default`, threshold ≥ 0.95) → cache hit returns early
+1. Embed transaction fingerprint → active `EmbeddingDriver` (Gemini `embedding-001`, 1536-dim, or Ollama `nomic-embed-text`, 768-dim; swap via `SENTINEL_EMBEDDING_DRIVER`, see ADR-0025)
+2. Vector search (Upstash, ns:`transactions`, threshold ≥ 0.95) → cache hit returns early. No implicit/default namespace is used anywhere (ADR-0026).
 3. Cache hit is validated against `sentinel_policy_epoch` — stale epoch triggers re-analysis
 4. Cache miss → Gemini Flash analysis with policy RAG (ns:`policies`, threshold ≥ 0.70, filtered by `domain` metadata when present)
-5. Upsert result into vector cache → XACK
+5. Upsert result into vector cache (ns:`transactions`) → XACK
 
 Tier 3 fallback: if embedding or vector search throws, `ThreatAnalysisService` runs locally (amount threshold, no AI). XACK always called.
 

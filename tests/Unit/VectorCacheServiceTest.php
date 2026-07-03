@@ -17,87 +17,92 @@ beforeEach(function () {
 
 $fakeVector = array_fill(0, 1536, 0.1);
 
-// ─── search ──────────────────────────────────────────────────────────────────
+// ─── searchNamespace (transactions) ───────────────────────────────────────────
 
-it('returns null when the HTTP request fails', function () use ($fakeVector) {
-    Http::fake(['*/query' => Http::response(null, 500)]);
+it('returns empty array when the HTTP request fails', function () use ($fakeVector) {
+    Http::fake(['*/query/transactions' => Http::response(null, 500)]);
 
-    $result = (new VectorCacheService)->search($fakeVector);
+    $result = (new VectorCacheService)->searchNamespace($fakeVector, 'transactions', 0.95, 1);
 
-    expect($result)->toBeNull();
+    expect($result)->toBe([]);
 });
 
-it('returns null when the result envelope is empty', function () use ($fakeVector) {
-    Http::fake(['*/query' => Http::response(['result' => []], 200)]);
+it('returns empty array when the result envelope is empty', function () use ($fakeVector) {
+    Http::fake(['*/query/transactions' => Http::response(['result' => []], 200)]);
 
-    $result = (new VectorCacheService)->search($fakeVector);
+    $result = (new VectorCacheService)->searchNamespace($fakeVector, 'transactions', 0.95, 1);
 
-    expect($result)->toBeNull();
+    expect($result)->toBe([]);
 });
 
-it('returns null when the result key is missing entirely', function () use ($fakeVector) {
-    Http::fake(['*/query' => Http::response(['unexpected' => 'shape'], 200)]);
+it('returns empty array when the result key is missing entirely', function () use ($fakeVector) {
+    Http::fake(['*/query/transactions' => Http::response(['unexpected' => 'shape'], 200)]);
 
-    $result = (new VectorCacheService)->search($fakeVector);
+    $result = (new VectorCacheService)->searchNamespace($fakeVector, 'transactions', 0.95, 1);
 
-    expect($result)->toBeNull();
+    expect($result)->toBe([]);
 });
 
-it('returns null when the best match score is below the threshold', function () use ($fakeVector) {
+it('filters out the best match when its score is below the threshold', function () use ($fakeVector) {
     Http::fake([
-        '*/query' => Http::response([
+        '*/query/transactions' => Http::response([
             'result' => [
                 ['id' => 'txn_1', 'score' => 0.89, 'metadata' => ['analysis' => ['isThreat' => false]]],
             ],
         ], 200),
     ]);
 
-    $result = (new VectorCacheService)->search($fakeVector);
+    $result = (new VectorCacheService)->searchNamespace($fakeVector, 'transactions', 0.95, 1);
 
-    expect($result)->toBeNull();
+    expect($result)->toBe([]);
 });
 
-it('returns null when the best match score equals the threshold minus one epsilon', function () use ($fakeVector) {
+it('filters out the best match when its score equals the threshold minus one epsilon', function () use ($fakeVector) {
     Http::fake([
-        '*/query' => Http::response([
+        '*/query/transactions' => Http::response([
             'result' => [
                 ['id' => 'txn_1', 'score' => 0.9499, 'metadata' => []],
             ],
         ], 200),
     ]);
 
-    expect((new VectorCacheService)->search($fakeVector))->toBeNull();
+    expect((new VectorCacheService)->searchNamespace($fakeVector, 'transactions', 0.95, 1))->toBe([]);
 });
 
 it('returns the top result when score meets the threshold exactly', function () use ($fakeVector) {
-    $match = ['id' => 'txn_abc', 'score' => 0.95, 'metadata' => ['analysis' => ['isThreat' => false, 'message' => 'OK']]];
-
     Http::fake([
-        '*/query' => Http::response(['result' => [$match]], 200),
+        '*/query/transactions' => Http::response([
+            'result' => [
+                ['id' => 'txn_abc', 'score' => 0.95, 'metadata' => ['analysis' => ['isThreat' => false, 'message' => 'OK']]],
+            ],
+        ], 200),
     ]);
 
-    $result = (new VectorCacheService)->search($fakeVector);
+    $result = (new VectorCacheService)->searchNamespace($fakeVector, 'transactions', 0.95, 1);
 
-    expect($result)->toBe($match);
+    expect($result)->toHaveCount(1)
+        ->and($result[0]['id'])->toBe('txn_abc');
 });
 
-it('returns the top result when score exceeds the threshold', function () use ($fakeVector) {
-    $best = ['id' => 'txn_1', 'score' => 0.99, 'metadata' => ['analysis' => ['isThreat' => true]]];
-    $second = ['id' => 'txn_2', 'score' => 0.96, 'metadata' => ['analysis' => ['isThreat' => false]]];
-
+it('returns the top result first when multiple scores exceed the threshold', function () use ($fakeVector) {
     Http::fake([
-        '*/query' => Http::response(['result' => [$best, $second]], 200),
+        '*/query/transactions' => Http::response([
+            'result' => [
+                ['id' => 'txn_1', 'score' => 0.99, 'metadata' => ['analysis' => ['isThreat' => true]]],
+                ['id' => 'txn_2', 'score' => 0.96, 'metadata' => ['analysis' => ['isThreat' => false]]],
+            ],
+        ], 200),
     ]);
 
-    $result = (new VectorCacheService)->search($fakeVector);
+    $result = (new VectorCacheService)->searchNamespace($fakeVector, 'transactions', 0.95, 3);
 
-    expect($result['id'])->toBe('txn_1');
+    expect($result[0]['id'])->toBe('txn_1');
 });
 
 it('sends the correct query payload', function () use ($fakeVector) {
-    Http::fake(['*/query' => Http::response(['result' => []], 200)]);
+    Http::fake(['*/query/transactions' => Http::response(['result' => []], 200)]);
 
-    (new VectorCacheService)->search($fakeVector, topK: 5);
+    (new VectorCacheService)->searchNamespace($fakeVector, 'transactions', 0.95, 5);
 
     Http::assertSent(function ($request) use ($fakeVector) {
         $body = $request->data();
@@ -109,90 +114,90 @@ it('sends the correct query payload', function () use ($fakeVector) {
 });
 
 it('sends the Bearer token in the Authorization header', function () use ($fakeVector) {
-    Http::fake(['*/query' => Http::response(['result' => []], 200)]);
+    Http::fake(['*/query/transactions' => Http::response(['result' => []], 200)]);
 
-    (new VectorCacheService)->search($fakeVector);
+    (new VectorCacheService)->searchNamespace($fakeVector, 'transactions', 0.95, 1);
 
     Http::assertSent(function ($request) {
         return $request->header('Authorization')[0] === 'Bearer fake-token';
     });
 });
 
-// ─── search: retry behaviour ─────────────────────────────────────────────────
+// ─── searchNamespace: retry behaviour ─────────────────────────────────────────
 
 it('retries search on transient failure and succeeds', function () use ($fakeVector) {
-    $match = ['id' => 'txn_retry', 'score' => 0.98, 'metadata' => ['analysis' => ['isThreat' => false]]];
-
     Http::fake([
-        '*/query' => Http::sequence()
+        '*/query/transactions' => Http::sequence()
             ->push(null, 503)
-            ->push(['result' => [$match]], 200),
+            ->push(['result' => [
+                ['id' => 'txn_retry', 'score' => 0.98, 'metadata' => ['analysis' => ['isThreat' => false]]],
+            ]], 200),
     ]);
 
-    $result = (new VectorCacheService)->search($fakeVector);
+    $result = (new VectorCacheService)->searchNamespace($fakeVector, 'transactions', 0.95, 1);
 
-    expect($result)->toBe($match);
+    expect($result[0]['id'])->toBe('txn_retry');
     Http::assertSentCount(2);
 });
 
-it('returns null after search retries are exhausted', function () use ($fakeVector) {
+it('returns empty array after search retries are exhausted', function () use ($fakeVector) {
     Http::fake([
-        '*/query' => Http::sequence()
+        '*/query/transactions' => Http::sequence()
             ->push(null, 502)
             ->push(null, 502),
     ]);
 
-    $result = (new VectorCacheService)->search($fakeVector);
+    $result = (new VectorCacheService)->searchNamespace($fakeVector, 'transactions', 0.95, 1);
 
-    expect($result)->toBeNull();
+    expect($result)->toBe([]);
 });
 
-// ─── search: logging ─────────────────────────────────────────────────────────
+// ─── searchNamespace: logging ─────────────────────────────────────────────────
 
 it('logs a warning when search fails', function () use ($fakeVector) {
     Log::shouldReceive('warning')
         ->once()
-        ->with('Vector cache search failed', Mockery::on(function ($ctx) {
-            return isset($ctx['status']) && isset($ctx['body']);
+        ->with('Vector namespace search failed', Mockery::on(function ($ctx) {
+            return $ctx['namespace'] === 'transactions' && isset($ctx['status']);
         }));
 
-    Http::fake(['*/query' => Http::response(['error' => 'bad'], 500)]);
+    Http::fake(['*/query/transactions' => Http::response(['error' => 'bad'], 500)]);
 
-    (new VectorCacheService)->search($fakeVector);
+    (new VectorCacheService)->searchNamespace($fakeVector, 'transactions', 0.95, 1);
 });
 
 it('does not log a warning when search succeeds', function () use ($fakeVector) {
     Log::shouldReceive('warning')->never();
 
-    Http::fake(['*/query' => Http::response(['result' => []], 200)]);
+    Http::fake(['*/query/transactions' => Http::response(['result' => []], 200)]);
 
-    (new VectorCacheService)->search($fakeVector);
+    (new VectorCacheService)->searchNamespace($fakeVector, 'transactions', 0.95, 1);
 });
 
-// ─── upsert ──────────────────────────────────────────────────────────────────
+// ─── upsertNamespace (transactions) ───────────────────────────────────────────
 
 it('returns true when the upsert succeeds', function () use ($fakeVector) {
-    Http::fake(['*/upsert' => Http::response([], 200)]);
+    Http::fake(['*/upsert/transactions' => Http::response([], 200)]);
 
-    $result = (new VectorCacheService)->upsert('txn_1', $fakeVector, ['analysis' => []]);
+    $result = (new VectorCacheService)->upsertNamespace('txn_1', $fakeVector, ['analysis' => []], 'transactions');
 
     expect($result)->toBeTrue();
 });
 
 it('returns false when the upsert request fails', function () use ($fakeVector) {
-    Http::fake(['*/upsert' => Http::response(['error' => 'bad request'], 400)]);
+    Http::fake(['*/upsert/transactions' => Http::response(['error' => 'bad request'], 400)]);
 
-    $result = (new VectorCacheService)->upsert('txn_1', $fakeVector, ['analysis' => []]);
+    $result = (new VectorCacheService)->upsertNamespace('txn_1', $fakeVector, ['analysis' => []], 'transactions');
 
     expect($result)->toBeFalse();
 });
 
 it('sends id, vector, and metadata in the upsert payload', function () use ($fakeVector) {
-    Http::fake(['*/upsert' => Http::response([], 200)]);
+    Http::fake(['*/upsert/transactions' => Http::response([], 200)]);
 
     $metadata = ['analysis' => ['isThreat' => false], 'threat_level' => 'low'];
 
-    (new VectorCacheService)->upsert('txn_xyz', $fakeVector, $metadata);
+    (new VectorCacheService)->upsertNamespace('txn_xyz', $fakeVector, $metadata, 'transactions');
 
     Http::assertSent(function ($request) use ($fakeVector, $metadata) {
         $body = $request->data();
@@ -205,16 +210,16 @@ it('sends id, vector, and metadata in the upsert payload', function () use ($fak
     });
 });
 
-// ─── upsert: retry behaviour ─────────────────────────────────────────────────
+// ─── upsertNamespace: retry behaviour ─────────────────────────────────────────
 
 it('retries upsert on transient failure and succeeds', function () use ($fakeVector) {
     Http::fake([
-        '*/upsert' => Http::sequence()
+        '*/upsert/transactions' => Http::sequence()
             ->push(null, 503)
             ->push([], 200),
     ]);
 
-    $result = (new VectorCacheService)->upsert('txn_retry', $fakeVector, ['test' => true]);
+    $result = (new VectorCacheService)->upsertNamespace('txn_retry', $fakeVector, ['test' => true], 'transactions');
 
     expect($result)->toBeTrue();
     Http::assertSentCount(2);
@@ -222,73 +227,74 @@ it('retries upsert on transient failure and succeeds', function () use ($fakeVec
 
 it('returns false after upsert retries are exhausted', function () use ($fakeVector) {
     Http::fake([
-        '*/upsert' => Http::sequence()
+        '*/upsert/transactions' => Http::sequence()
             ->push(null, 500)
             ->push(null, 500),
     ]);
 
-    $result = (new VectorCacheService)->upsert('txn_fail', $fakeVector, ['test' => true]);
+    $result = (new VectorCacheService)->upsertNamespace('txn_fail', $fakeVector, ['test' => true], 'transactions');
 
     expect($result)->toBeFalse();
 });
 
-// ─── upsert: logging ─────────────────────────────────────────────────────────
+// ─── upsertNamespace: logging ─────────────────────────────────────────────────
 
 it('logs a warning when upsert fails', function () use ($fakeVector) {
     Log::shouldReceive('warning')
         ->once()
-        ->with('Vector cache upsert failed', Mockery::on(function ($ctx) {
-            return $ctx['id'] === 'txn_log'
+        ->with('Vector namespace upsert failed', Mockery::on(function ($ctx) {
+            return $ctx['namespace'] === 'transactions'
+                && $ctx['id'] === 'txn_log'
                 && isset($ctx['status'])
                 && isset($ctx['body']);
         }));
 
-    Http::fake(['*/upsert' => Http::response(['error' => 'quota'], 429)]);
+    Http::fake(['*/upsert/transactions' => Http::response(['error' => 'quota'], 429)]);
 
-    (new VectorCacheService)->upsert('txn_log', $fakeVector, ['test' => true]);
+    (new VectorCacheService)->upsertNamespace('txn_log', $fakeVector, ['test' => true], 'transactions');
 });
 
 it('does not log a warning when upsert succeeds', function () use ($fakeVector) {
     Log::shouldReceive('warning')->never();
 
-    Http::fake(['*/upsert' => Http::response([], 200)]);
+    Http::fake(['*/upsert/transactions' => Http::response([], 200)]);
 
-    (new VectorCacheService)->upsert('txn_ok', $fakeVector, ['test' => true]);
+    (new VectorCacheService)->upsertNamespace('txn_ok', $fakeVector, ['test' => true], 'transactions');
 });
 
-// ─── delete ──────────────────────────────────────────────────────────────────
+// ─── deleteNamespace (transactions) ───────────────────────────────────────────
 
 it('returns true when delete succeeds', function () {
-    Http::fake(['*/delete' => Http::response([], 200)]);
+    Http::fake(['*/delete/transactions' => Http::response([], 200)]);
 
-    $result = (new VectorCacheService)->delete('txn_old');
+    $result = (new VectorCacheService)->deleteNamespace('txn_old', 'transactions');
 
     expect($result)->toBeTrue();
 });
 
 it('returns false when delete fails', function () {
-    Http::fake(['*/delete' => Http::response(['error' => 'not found'], 404)]);
+    Http::fake(['*/delete/transactions' => Http::response(['error' => 'not found'], 404)]);
 
-    $result = (new VectorCacheService)->delete('txn_unknown');
+    $result = (new VectorCacheService)->deleteNamespace('txn_unknown', 'transactions');
 
     expect($result)->toBeFalse();
 });
 
 it('sends the correct delete payload', function () {
-    Http::fake(['*/delete' => Http::response([], 200)]);
+    Http::fake(['*/delete/transactions' => Http::response([], 200)]);
 
-    (new VectorCacheService)->delete('txn_cleanup');
+    (new VectorCacheService)->deleteNamespace('txn_cleanup', 'transactions');
 
     Http::assertSent(function ($request) {
-        return str_contains((string) $request->url(), '/delete')
+        return str_contains((string) $request->url(), '/delete/transactions')
             && in_array('txn_cleanup', $request->data());
     });
 });
 
 it('sends the Bearer token in delete requests', function () {
-    Http::fake(['*/delete' => Http::response([], 200)]);
+    Http::fake(['*/delete/transactions' => Http::response([], 200)]);
 
-    (new VectorCacheService)->delete('txn_auth');
+    (new VectorCacheService)->deleteNamespace('txn_auth', 'transactions');
 
     Http::assertSent(function ($request) {
         return $request->header('Authorization')[0] === 'Bearer fake-token';
@@ -297,12 +303,12 @@ it('sends the Bearer token in delete requests', function () {
 
 it('retries delete on transient failure and succeeds', function () {
     Http::fake([
-        '*/delete' => Http::sequence()
+        '*/delete/transactions' => Http::sequence()
             ->push(null, 502)
             ->push([], 200),
     ]);
 
-    $result = (new VectorCacheService)->delete('txn_retry_del');
+    $result = (new VectorCacheService)->deleteNamespace('txn_retry_del', 'transactions');
 
     expect($result)->toBeTrue();
     Http::assertSentCount(2);
@@ -311,14 +317,15 @@ it('retries delete on transient failure and succeeds', function () {
 it('logs a warning when delete fails', function () {
     Log::shouldReceive('warning')
         ->once()
-        ->with('Vector cache delete failed', Mockery::on(function ($ctx) {
-            return $ctx['id'] === 'txn_del_fail'
+        ->with('Vector namespace delete failed', Mockery::on(function ($ctx) {
+            return $ctx['namespace'] === 'transactions'
+                && $ctx['id'] === 'txn_del_fail'
                 && isset($ctx['status']);
         }));
 
-    Http::fake(['*/delete' => Http::response(['error' => 'err'], 500)]);
+    Http::fake(['*/delete/transactions' => Http::response(['error' => 'err'], 500)]);
 
-    (new VectorCacheService)->delete('txn_del_fail');
+    (new VectorCacheService)->deleteNamespace('txn_del_fail', 'transactions');
 });
 
 // ─── namespace endpoint paths ─────────────────────────────────────────────────

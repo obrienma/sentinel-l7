@@ -1,4 +1,5 @@
 <?php
+
 use App\Services\TransactionStreamService;
 use Illuminate\Support\Facades\Redis as LRedis;
 
@@ -9,12 +10,8 @@ it('streams a transaction to the redis stream', function () {
     LRedis::shouldReceive('get')->with('sentinel:consumer_lag')->andReturn(null);
 
     LRedis::shouldReceive('executeRaw')
-        ->with(['XLEN', 'transactions'])
-        ->andReturn(0);
-
-    LRedis::shouldReceive('executeRaw')
         ->once()
-        ->with(Mockery::on(fn($args) => $args[0] === 'XADD' && $args[1] === 'transactions'))
+        ->with(Mockery::on(fn ($args) => $args[0] === 'XADD' && $args[1] === 'transactions'))
         ->andReturn('12345-0');
 
     $this->artisan('sentinel:stream --limit=1')
@@ -26,52 +23,12 @@ it('stops after the given limit and prints the shutdown message', function () {
     LRedis::shouldReceive('get')->with('sentinel:consumer_lag')->andReturn(null);
 
     LRedis::shouldReceive('executeRaw')
-        ->with(['XLEN', 'transactions'])
-        ->andReturn(0);
-
-    LRedis::shouldReceive('executeRaw')
         ->once()
-        ->with(Mockery::on(fn($args) => $args[0] === 'XADD'));
+        ->with(Mockery::on(fn ($args) => $args[0] === 'XADD'));
 
     $this->artisan('sentinel:stream --limit=1')
         ->assertExitCode(0)
         ->expectsOutput('Limit reached. Powering down.');
-});
-
-it('pauses the publisher while stream depth exceeds the configured threshold', function () {
-    config()->set('sentinel.backpressure.publish_pause_threshold', 800);
-    config()->set('sentinel.backpressure.publish_pause_ms', 1);
-
-    $fakeTransaction = [
-        'id'        => 'txn-pause-test',
-        'merchant'  => 'Costco',
-        'amount'    => 1.00,
-        'currency'  => 'CAD',
-        'timestamp' => now()->toIso8601String(),
-    ];
-
-    $depthCalls = 0;
-    $stream = Mockery::mock(TransactionStreamService::class);
-    $stream->shouldReceive('generate')->andReturnUsing(function () use ($fakeTransaction) {
-        yield $fakeTransaction;
-    });
-    $stream->shouldReceive('depth')->andReturnUsing(function () use (&$depthCalls) {
-        $depthCalls++;
-        // First two probes report a deep stream; third reports drained so publish proceeds.
-        return $depthCalls < 3 ? 1000 : 0;
-    });
-    $stream->shouldReceive('readLagKey')->andReturn(0);
-    $stream->shouldReceive('publish')->once()->andReturn(true);
-
-    $this->app->instance(TransactionStreamService::class, $stream);
-
-    $this->artisan('sentinel:stream --limit=1 --speed=0')
-        ->assertExitCode(0)
-        ->expectsOutputToContain('Stream depth above 800');
-
-    expect($depthCalls)->toBeGreaterThanOrEqual(3);
-
-    Mockery::close();
 });
 
 it('sleeps once when consumer lag exceeds the soft limit', function () {
@@ -87,6 +44,7 @@ it('sleeps once when consumer lag exceeds the soft limit', function () {
     $stream->shouldReceive('depth')->andReturn(0);
     $stream->shouldReceive('readLagKey')->andReturnUsing(function () use (&$lagCalls) {
         $lagCalls++;
+
         return 75; // above warn (50), below pause (200)
     });
     $stream->shouldReceive('publish')->once()->andReturn(true);
@@ -114,6 +72,7 @@ it('spin-waits when consumer lag exceeds the hard limit until it drops', functio
     $stream->shouldReceive('depth')->andReturn(0);
     $stream->shouldReceive('readLagKey')->andReturnUsing(function () use (&$lagCalls) {
         $lagCalls++;
+
         // First two calls above the hard limit; third below → publish proceeds.
         return $lagCalls < 3 ? 250 : 0;
     });
@@ -130,7 +89,7 @@ it('spin-waits when consumer lag exceeds the hard limit until it drops', functio
 });
 
 it('stops cleanly on SIGINT and prints the signal shutdown message', function () {
-    if (!extension_loaded('pcntl') || !function_exists('posix_kill')) {
+    if (! extension_loaded('pcntl') || ! function_exists('posix_kill')) {
         $this->markTestSkipped('pcntl/posix extensions not available');
     }
 
@@ -155,6 +114,7 @@ it('stops cleanly on SIGINT and prints the signal shutdown message', function ()
     $stream->shouldReceive('readLagKey')->andReturn(0);
     $stream->shouldReceive('publish')->andReturnUsing(function () use (&$publishCount) {
         $publishCount++;
+
         return true;
     });
 
@@ -170,7 +130,7 @@ it('stops cleanly on SIGINT and prints the signal shutdown message', function ()
 });
 
 it('stops cleanly on SIGTERM', function () {
-    if (!extension_loaded('pcntl') || !function_exists('posix_kill')) {
+    if (! extension_loaded('pcntl') || ! function_exists('posix_kill')) {
         $this->markTestSkipped('pcntl/posix extensions not available');
     }
 
@@ -195,6 +155,7 @@ it('stops cleanly on SIGTERM', function () {
     $stream->shouldReceive('readLagKey')->andReturn(0);
     $stream->shouldReceive('publish')->andReturnUsing(function () use (&$publishCount) {
         $publishCount++;
+
         return true;
     });
 

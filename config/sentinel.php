@@ -17,8 +17,6 @@ return [
     'axiom_threshold' => env('AXIOM_AUDIT_THRESHOLD', 0.8),
 
     'backpressure' => [
-        'publish_pause_threshold' => env('SENTINEL_PUBLISH_PAUSE_THRESHOLD', 800),
-        'publish_pause_ms' => env('SENTINEL_PUBLISH_PAUSE_MS', 500),
         // Graduated lag thresholds (XPENDING count). See ADR-0023.
         'lag_warn' => env('SENTINEL_LAG_WARN', 50),
         'lag_pause' => env('SENTINEL_LAG_PAUSE', 200),

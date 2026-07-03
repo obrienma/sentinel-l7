@@ -8,13 +8,16 @@ use Illuminate\Support\Facades\Redis;
 
 class TransactionProcessorService
 {
-    const FEED_KEY    = 'sentinel:recent_transactions';
+    const FEED_KEY = 'sentinel:recent_transactions';
+
     const FEED_LENGTH = 50;
 
+    const NAMESPACE = 'transactions';
+
     public function __construct(
-        private readonly EmbeddingService      $embedding,
+        private readonly EmbeddingService $embedding,
         private readonly ThreatAnalysisService $analyzer,
-        private readonly VectorCacheService    $vectorCache,
+        private readonly VectorCacheService $vectorCache,
     ) {}
 
     /**
@@ -31,24 +34,26 @@ class TransactionProcessorService
     public function process(array $data, bool $observe = true): array
     {
         $startTime = microtime(true);
-        $txnId     = $data['id']       ?? uniqid('txn_');
-        $merchant  = $data['merchant'] ?? $data['merchant_name'] ?? '?';
+        $txnId = $data['id'] ?? uniqid('txn_');
+        $merchant = $data['merchant'] ?? $data['merchant_name'] ?? '?';
         $rawAmount = isset($data['amount']) ? (float) $data['amount'] : null;
-        $amount    = $rawAmount !== null ? number_format($rawAmount, 2) : '?';
-        $currency  = $data['currency'] ?? '';
+        $amount = $rawAmount !== null ? number_format($rawAmount, 2) : '?';
+        $currency = $data['currency'] ?? '';
 
         try {
             $fingerprint = $this->embedding->createTransactionFingerprint($data);
-            $vector      = $this->embedding->embed($fingerprint);
-            $cached      = $this->vectorCache->search($vector);
+            $vector = $this->embedding->embed($fingerprint);
+            $threshold = (float) config('services.upstash_vector.similarity_threshold');
+            $results = $this->vectorCache->searchNamespace($vector, self::NAMESPACE, $threshold, 1);
+            $cached = $results[0] ?? null;
 
             if ($cached !== null) {
-                $cachedEpoch  = $cached['metadata']['policy_epoch'] ?? null;
+                $cachedEpoch = $cached['metadata']['policy_epoch'] ?? null;
                 $currentEpoch = Cache::get('sentinel_policy_epoch');
 
                 if ($cachedEpoch !== $currentEpoch) {
                     \Illuminate\Support\Facades\Log::info('Vector cache stale: policy epoch mismatch — re-analyzing', [
-                        'cached_epoch'  => $cachedEpoch,
+                        'cached_epoch' => $cachedEpoch,
                         'current_epoch' => $currentEpoch,
                     ]);
                     $cached = null;
@@ -58,7 +63,7 @@ class TransactionProcessorService
             if ($cached) {
                 $analysis = $cached['metadata']['analysis'];
                 $isThreat = $analysis['isThreat'];
-                $message  = $analysis['message'];
+                $message = $analysis['message'];
 
                 if ($observe) {
                     if ($isThreat) {
@@ -74,19 +79,20 @@ class TransactionProcessorService
             // Cache miss — full analysis then store result
             $result = $this->analyzer->analyze($data);
 
-            $this->vectorCache->upsert(
+            $this->vectorCache->upsertNamespace(
                 "txn_{$txnId}",
                 $vector,
                 [
                     'analysis' => [
-                        'isThreat'     => $result->isThreat,
-                        'message'      => $result->message,
+                        'isThreat' => $result->isThreat,
+                        'message' => $result->message,
                         'threat_level' => $result->isThreat ? 'high' : 'low',
                     ],
-                    'timestamp'    => now()->toIso8601String(),
+                    'timestamp' => now()->toIso8601String(),
                     'threat_level' => $result->isThreat ? 'high' : 'low',
                     'policy_epoch' => Cache::get('sentinel_policy_epoch'),
-                ]
+                ],
+                self::NAMESPACE,
             );
 
             if ($observe) {
@@ -104,7 +110,7 @@ class TransactionProcessorService
         }
 
         $isThreat = $result->isThreat;
-        $message  = $result->message;
+        $message = $result->message;
 
         if ($observe) {
             if ($isThreat) {
@@ -119,9 +125,9 @@ class TransactionProcessorService
     private function summary(string $source, bool $isThreat, string $message, float $startTime): array
     {
         return [
-            'source'     => $source,
-            'is_threat'  => $isThreat,
-            'message'    => $message,
+            'source' => $source,
+            'is_threat' => $isThreat,
+            'message' => $message,
             'elapsed_ms' => round((microtime(true) - $startTime) * 1000, 2),
         ];
     }
@@ -133,37 +139,37 @@ class TransactionProcessorService
     }
 
     private function recordTransaction(
-        string  $txnId,
-        string  $merchant,
-        string  $amount,
-        string  $currency,
-        bool    $isThreat,
-        string  $message,
-        string  $source,
-        ?float  $rawAmount = null,
+        string $txnId,
+        string $merchant,
+        string $amount,
+        string $currency,
+        bool $isThreat,
+        string $message,
+        string $source,
+        ?float $rawAmount = null,
     ): void {
         $entry = json_encode([
-            'id'        => $txnId,
-            'merchant'  => $merchant,
-            'amount'    => $amount,
-            'currency'  => $currency,
+            'id' => $txnId,
+            'merchant' => $merchant,
+            'amount' => $amount,
+            'currency' => $currency,
             'is_threat' => $isThreat,
-            'message'   => $message,
-            'source'    => $source,
-            'at'        => now()->toIso8601String(),
+            'message' => $message,
+            'source' => $source,
+            'at' => now()->toIso8601String(),
         ]);
 
         Redis::executeRaw(['LPUSH', self::FEED_KEY, $entry]);
         Redis::executeRaw(['LTRIM', self::FEED_KEY, 0, self::FEED_LENGTH - 1]);
 
         Transaction::create([
-            'txn_id'    => $txnId,
-            'merchant'  => $merchant,
-            'amount'    => $rawAmount,
-            'currency'  => $currency ?: null,
+            'txn_id' => $txnId,
+            'merchant' => $merchant,
+            'amount' => $rawAmount,
+            'currency' => $currency ?: null,
             'is_threat' => $isThreat,
-            'message'   => $message,
-            'source'    => $source,
+            'message' => $message,
+            'source' => $source,
         ]);
     }
 }

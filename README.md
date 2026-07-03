@@ -94,7 +94,7 @@ flowchart LR
 **⚡ AI & Vector**
 
 - **Gemini Flash + OpenRouter:** LLM analysis runs through a swappable `ComplianceDriver` interface backed by a Laravel Service Manager; switching providers is a single env-var change, not a code change.
-- **Upstash Vector:** Dual-namespace strategy — `default` (semantic cache, ≥ 0.95 threshold) cuts repeat LLM calls by 80%+; `policies` (RAG corpus, ≥ 0.70, domain-filtered) grounds compliance rulings in indexed regulatory documents (AML, HIPAA, GDPR).
+- **Upstash Vector:** Named-namespace strategy (ADR-0026) — `transactions` (semantic cache, ≥ 0.95 threshold) cuts repeat LLM calls by 80%+; `policies` (RAG corpus, ≥ 0.70, domain-filtered) grounds compliance rulings in indexed regulatory documents (AML, HIPAA, GDPR). No data lives in Upstash's implicit default namespace.
 
 **👁️ Frontend & Observability**
 
@@ -113,7 +113,7 @@ flowchart LR
 
 - **PHP 8.4+** with Composer
 - **Node.js 20+**
-- **Upstash** account — Redis Streams + Vector namespaces (`default`, `policies`)
+- **Upstash** account — Redis Streams + Vector namespaces (`transactions`, `policies`)
 - **Neon** PostgreSQL database
 - **Gemini API key** (or OpenRouter key if using that driver)
 
@@ -216,7 +216,7 @@ The system is composed of three long-running processes plus a shared intelligenc
 | **⚡ Transaction Worker** | `app/Console/Commands/WatchTransactions.php` · `app/Services/TransactionProcessorService.php` | **Stream Consumer:** `XREADGROUP` on `sentinel:transactions`; semantic cache check → optional AI analysis → `XACK`. `XAUTOCLAIM` recovery pass at top of every loop iteration. |
 | **🔷 Axiom Worker** | `app/Console/Commands/WatchAxioms.php` · `app/Services/AxiomProcessorService.php` | **Axiom Consumer:** `XREADGROUP` on `synapse:axioms`; threshold routing (`anomaly_score > 0.8`) → AI audit narrative → Postgres. Every Axiom persisted — no silent drops. |
 | **🧠 AI Layer** | `app/Contracts/ComplianceDriver.php` · `app/Services/ComplianceManager.php` | **Driver Abstraction:** Resolves `gemini` or `openrouter` from env via Laravel Service Manager; domain logic only depends on the `ComplianceDriver` interface. |
-| **💾 Vector Layer** | `app/Services/VectorCacheService.php` · `app/Services/EmbeddingService.php` | **Semantic Cache + RAG:** Upstash Vector `default` namespace (cache, ≥ 0.95) + `policies` namespace (RAG, ≥ 0.70, domain-filtered); fingerprint embedding via Gemini `embedding-001` (1536-dim). |
+| **💾 Vector Layer** | `app/Services/VectorCacheService.php` · `app/Services/EmbeddingService.php` | **Semantic Cache + RAG:** Upstash Vector `transactions` namespace (cache, ≥ 0.95) + `policies` namespace (RAG, ≥ 0.70, domain-filtered); fingerprint embedding via Ollama `nomic-embed-text` (768-dim) or Gemini `embedding-001` (1536-dim), swappable via `SENTINEL_EMBEDDING_DRIVER`. |
 | **🔌 MCP** | `app/Mcp/Servers/SentinelServer.php` · `routes/ai.php` | **Agent Protocol:** Model Context Protocol endpoint at `POST /mcp`; exposes `analyze_transaction`, `search_policies`, and `get_recent_transactions` tools to AI agents (Claude Desktop, Cursor, etc.). |
 
 ### 📐 Scale & Fault Tolerance
@@ -428,7 +428,7 @@ No dashboard change is needed once a driver call succeeds — the queries are al
 | [USER_STORIES.md](docs/USER_STORIES.md) | Compliance officer, platform engineer, AI agent | — |
 | [DEV_GETTING_STARTED.md](docs/DEV_GETTING_STARTED.md) | Full local setup walkthrough | — |
 | [journal.md](docs/journal.md) | Engineering journal — one entry per phase | — |
-| [adr/](docs/adr/) | Architecture Decision Records (ADR-0001 – ADR-0025) | — |
+| [adr/](docs/adr/) | Architecture Decision Records (ADR-0001 – ADR-0026) | — |
 
 
 ## 🗺️ Roadmap
@@ -443,6 +443,7 @@ No dashboard change is needed once a driver call succeeds — the queries are al
 * [ ] **End-to-end idempotency audit** — verify EventHorizon event ID flows through Synapse-L4 as `source_id` on the Axiom (early-exit dedup in `AxiomProcessorService` is done; source_id provenance through the full chain is not yet verified)
 * [ ] **Fingerprint field reconciliation (ADR-0002/ADR-0015)** — the transaction fingerprint now includes a randomly-templated `message` field, adding entropy that may suppress cache hits; revisit alongside the open amount-representation (ADR-0002) and similarity-threshold (ADR-0015) questions
 * [ ] **Ollama embedding threshold re-validation (ADR-0015/ADR-0025)** — cutover is live (`SENTINEL_EMBEDDING_DRIVER=ollama`, Upstash Vector index recreated at 768-dim, `sentinel:ingest` re-run against nomic-embed-text v1.5); still need to re-validate `UPSTASH_VECTOR_THRESHOLD` against nomic's score distribution before treating `ollama` as the production default
+* [ ] **Telemetry namespace** — add a third named Upstash Vector namespace (e.g. `telemetry`) following the pattern established in ADR-0026; no implicit/default namespace usage anywhere in the codebase
 
 ### 📦 Production-Ready Baseline
 
@@ -454,7 +455,6 @@ No dashboard change is needed once a driver call succeeds — the queries are al
 
 #### 🔁 Core Ingestion & Stream Reliability
 * Core pipeline — Redis Streams, semantic cache, fault tolerance (XCLAIM)
-* Backpressure step 1 — `XREAD COUNT 1` on transaction stream + `XLEN` producer guard (`sentinel.backpressure.publish_pause_threshold`, default 800) pauses `sentinel:stream` when depth exceeds threshold
 * Backpressure step 2 — XREADGROUP + XAUTOCLAIM self-healing worker pool (ADR-0022): transaction stream migrated to consumer group `sentinel-consumers`; `XAUTOCLAIM` embedded at top of each worker loop; dead-letter guard ACKs poison messages at `delivery_count >= 3`; dedicated reclaimer daemon removed
 * Backpressure step 3 — graduated consumer lag signal (ADR-0023): worker writes `XPENDING` count to `sentinel:consumer_lag` (TTL 10s); producer applies soft-limit sleep (500ms, configurable) at lag > 50, spin-wait at lag > 200
 * Weighted transaction simulation — `simulation.merchants` config holds weighted profiles (category, weight, amount range, currencies, `is_threat`) instead of a flat uniform-probability list; `TransactionStreamService::generate()` samples via an index-repetition pool so traffic mix reflects realistic merchant volume
@@ -467,6 +467,7 @@ No dashboard change is needed once a driver call succeeds — the queries are al
 * Output quality scoring — 4-signal rubric on every compliance driver response; `low quality score` warning when score ≤ 1
 * Retrieval coverage logging — `mean_score` and `under_indexed` per RAG query; `Log::warning` fires when a domain filter returns < 2 chunks
 * EmbeddingDriver stack (ADR-0025) — `GeminiEmbeddingDriver`, `OllamaEmbeddingDriver` (nomic-embed-text v1.5, 768-dim, task-prefixed `search_document`/`search_query` inputs), `EmbeddingManager` (Service Manager pattern), swap via `SENTINEL_EMBEDDING_DRIVER`; `EmbeddingService` now delegates to the resolved driver instead of calling Gemini directly. Live in this environment: Upstash Vector index recreated at 768-dim, policy KB re-ingested against Ollama.
+* Named Vector namespaces (ADR-0026) — `VectorCacheService` no longer has any bare/default-namespace methods; transaction semantic cache moved from Upstash's implicit default namespace to an explicit `transactions` namespace, matching `policies`. Sets the pattern for future namespaces (e.g. telemetry) and tenant-prefixed namespacing.
 
 #### 🔷 Axiom / Synapse-L4 Integration
 * Synapse-L4 Axiom ingestion — `synapse:axioms` Redis stream + `sentinel:watch-axioms` worker
