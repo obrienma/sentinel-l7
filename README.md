@@ -75,6 +75,7 @@ flowchart LR
 - [📚 Docs](#-docs)
 - [🗺️ Roadmap](#️-roadmap)
   - [📋 Planned](#-planned)
+  - [🐛 Known issues](#-known-issues)
   - [📦 Production-Ready Baseline](#-production-ready-baseline)
     - [🔁 Core Ingestion \& Stream Reliability](#-core-ingestion--stream-reliability)
     - [🧠 AI Compliance Engine](#-ai-compliance-engine)
@@ -444,6 +445,18 @@ No dashboard change is needed once a driver call succeeds — the queries are al
 * [ ] **Fingerprint field reconciliation (ADR-0002/ADR-0015)** — the transaction fingerprint now includes a randomly-templated `message` field, adding entropy that may suppress cache hits; revisit alongside the open amount-representation (ADR-0002) and similarity-threshold (ADR-0015) questions
 * [ ] **Ollama embedding threshold re-validation (ADR-0015/ADR-0025)** — cutover is live (`SENTINEL_EMBEDDING_DRIVER=ollama`, Upstash Vector index recreated at 768-dim, `sentinel:ingest` re-run against nomic-embed-text v1.5); still need to re-validate `UPSTASH_VECTOR_THRESHOLD` against nomic's score distribution before treating `ollama` as the production default
 * [ ] **Telemetry namespace** — add a third named Upstash Vector namespace (e.g. `telemetry`) following the pattern established in ADR-0026; no implicit/default namespace usage anywhere in the codebase
+
+## 🐛 Known issues
+
+- [ ] **ADR-0007 vs. implementation drift** (sentinel-l7): ADR-0007 documents
+      Tier 2 as "Gemini Flash + policy RAG," but `TransactionProcessorService`E
+      calls the rule-based `ThreatAnalysisService` on cache miss — no LLM
+      involvement in that pipeline. Needs a decision: wire Gemini in, or
+      correct the ADR to document the two-pipeline split as intentional.
+- [ ] **No rule-based fallback on LLM failure** (sentinel-l7):
+      `AxiomProcessorService` degrades to `risk_level: unknown` / `narrative:
+      null` on Gemini/OpenRouter failure — no Tier 3 verdict exists for this
+      pipeline, unlike the transaction pipeline's `ThreatAnalysisService`.
 
 ### 📦 Production-Ready Baseline
 
