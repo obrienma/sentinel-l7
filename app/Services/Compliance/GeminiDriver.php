@@ -33,6 +33,47 @@ class GeminiDriver implements ComplianceDriver
         return $result;
     }
 
+    public function analyzeTransaction(array $data): array
+    {
+        $query = $this->buildTransactionQueryText($data);
+        $policyChunks = $this->fetchPolicyContext($query, $data);
+        $prompt = $this->buildTransactionPrompt($data, $policyChunks);
+        $raw = $this->callGeminiFlash($prompt);
+        $result = $this->parseResponse($raw);
+        $this->logResponseQuality($result, $data);
+
+        return $result;
+    }
+
+    private function buildTransactionQueryText(array $data): string
+    {
+        $merchant = $data['merchant'] ?? $data['merchant_name'] ?? 'an unspecified merchant';
+        $amount = $data['amount'] ?? 'an unspecified amount';
+        $currency = $data['currency'] ?? '';
+
+        return 'What compliance obligations, reporting requirements, and regulatory thresholds apply '
+             ."to a {$currency} {$amount} transaction at {$merchant}?";
+    }
+
+    private function buildTransactionPrompt(array $data, array $policyChunks): string
+    {
+        $policyText = empty($policyChunks)
+            ? 'No specific policy context retrieved.'
+            : collect($policyChunks)
+                ->map(fn ($c) => '- '.($c['metadata']['text'] ?? json_encode($c['metadata'])))
+                ->implode("\n");
+
+        return strtr(
+            file_get_contents(base_path('prompts/transaction-compliance-analysis.txt')),
+            [
+                '{merchant}' => $data['merchant'] ?? $data['merchant_name'] ?? 'unknown',
+                '{amount}' => $data['amount'] ?? 'unknown',
+                '{currency}' => $data['currency'] ?? 'unknown',
+                '{policy_context}' => $policyText,
+            ]
+        );
+    }
+
     private function buildQueryText(array $data): string
     {
         $status = $data['status'] ?? 'unknown';

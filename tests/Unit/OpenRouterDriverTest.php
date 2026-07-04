@@ -148,6 +148,66 @@ it('sends the Authorization header with the configured API key', function () {
     Http::assertSent(fn ($req) => $req->hasHeader('Authorization', 'Bearer test-key-123'));
 });
 
+// ─── analyzeTransaction() ──────────────────────────────────────────────────────
+
+function openRouterTransaction(array $overrides = []): array
+{
+    return array_merge([
+        'id' => 'txn-42',
+        'merchant' => 'ACME Corp',
+        'amount' => 500.00,
+        'currency' => 'AUD',
+    ], $overrides);
+}
+
+it('returns a parsed narrative from a well-formed transaction analysis response', function () {
+    $payload = [
+        'choices' => [[
+            'message' => [
+                'content' => json_encode([
+                    'narrative' => 'High value transaction requires review.',
+                    'risk_level' => 'high',
+                    'policy_refs' => ['AML-3'],
+                    'confidence' => 0.88,
+                ]),
+            ],
+        ]],
+    ];
+
+    $result = mockOpenRouterDriver($payload)->analyzeTransaction(openRouterTransaction());
+
+    expect($result['narrative'])->toBe('High value transaction requires review.')
+        ->and($result['risk_level'])->toBe('high')
+        ->and($result['confidence'])->toBe(0.88);
+});
+
+it('builds the transaction prompt from the transaction-compliance-analysis template', function () {
+    $captured = null;
+
+    Http::fake(function ($request) use (&$captured) {
+        $captured = $request->data()['messages'][0]['content'];
+
+        return Http::response([
+            'choices' => [['message' => ['content' => json_encode([
+                'narrative' => 'OK.', 'risk_level' => 'low', 'policy_refs' => [], 'confidence' => 0.5,
+            ])]]],
+        ], 200);
+    });
+
+    $embedding = Mockery::mock(EmbeddingService::class);
+    $embedding->shouldReceive('embed')->andReturn(array_fill(0, 1536, 0.1));
+    $vectorCache = Mockery::mock(VectorCacheService::class);
+    $vectorCache->shouldReceive('searchNamespace')->andReturn([]);
+
+    (new OpenRouterDriver($embedding, $vectorCache))->analyzeTransaction(openRouterTransaction());
+
+    expect($captured)
+        ->toContain('Merchant: ACME Corp')
+        ->toContain('Amount: 500')
+        ->toContain('Currency: AUD')
+        ->not->toContain('Anomaly score');
+});
+
 // ─── Domain filtering ─────────────────────────────────────────────────────────
 
 it('passes domain filter to searchNamespace when domain key is present in data', function () {

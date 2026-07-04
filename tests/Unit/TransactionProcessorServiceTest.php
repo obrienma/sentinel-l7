@@ -1,5 +1,6 @@
 <?php
 
+use App\Contracts\ComplianceDriver;
 use App\Models\Transaction;
 use App\Services\EmbeddingService;
 use App\Services\ThreatAnalysisService;
@@ -30,8 +31,9 @@ function tps_processor(
     EmbeddingService $e,
     ThreatAnalysisService $a,
     VectorCacheService $vc,
+    ?ComplianceDriver $d = null,
 ): TransactionProcessorService {
-    return new TransactionProcessorService($e, $a, $vc);
+    return new TransactionProcessorService($e, $a, $vc, $d ?? tps_driverUnused());
 }
 
 function tps_embeds(array $vector): EmbeddingService
@@ -104,6 +106,38 @@ function tps_analyzerUnused(): ThreatAnalysisService
     return $m;
 }
 
+/**
+ * Mocks the AI driver (Tier 2) for a cache-miss path.
+ *
+ * @param  array{narrative: ?string, risk_level: string, policy_refs?: array, confidence?: float}  $aiResult
+ */
+function tps_ai(array $aiResult): ComplianceDriver
+{
+    $m = Mockery::mock(ComplianceDriver::class);
+    $m->shouldReceive('analyzeTransaction')->andReturn(array_merge([
+        'policy_refs' => [],
+        'confidence' => 0.9,
+    ], $aiResult));
+
+    return $m;
+}
+
+function tps_aiFails(): ComplianceDriver
+{
+    $m = Mockery::mock(ComplianceDriver::class);
+    $m->shouldReceive('analyzeTransaction')->andThrow(new RuntimeException('Gemini Flash unavailable'));
+
+    return $m;
+}
+
+function tps_driverUnused(): ComplianceDriver
+{
+    $m = Mockery::mock(ComplianceDriver::class);
+    $m->shouldNotReceive('analyzeTransaction');
+
+    return $m;
+}
+
 function tps_allowRedis(): void
 {
     Redis::shouldReceive('executeRaw')->andReturn(1);
@@ -126,20 +160,22 @@ dataset('source × outcome', function () {
     yield 'cache_miss / clear' => [
         fn () => tps_processor(
             tps_embeds($v),
-            tps_analyzes(ThreatResult::clear(['merchant' => 'ACME Corp', 'amount' => 150.00])),
-            tps_cacheMiss()
+            tps_analyzerUnused(),
+            tps_cacheMiss(),
+            tps_ai(['narrative' => 'Layer 7 Clear: ACME Corp - OK', 'risk_level' => 'low']),
         ),
         'cache_miss', false, 'Layer 7 Clear',
     ];
     yield 'cache_miss / threat' => [
         fn () => tps_processor(
             tps_embeds($v),
-            tps_analyzes(ThreatResult::threat('High value at ACME Corp ($500.00)', ['merchant' => 'ACME Corp', 'amount' => 500.00])),
-            tps_cacheMiss()
+            tps_analyzerUnused(),
+            tps_cacheMiss(),
+            tps_ai(['narrative' => 'High value at ACME Corp ($500.00)', 'risk_level' => 'high']),
         ),
         'cache_miss', true, 'High value',
     ];
-    yield 'fallback / clear' => [
+    yield 'fallback / clear (embedding throws)' => [
         fn () => tps_processor(
             tps_embeddingFails(),
             tps_analyzes(ThreatResult::clear(['merchant' => 'ACME Corp', 'amount' => 150.00])),
@@ -147,13 +183,22 @@ dataset('source × outcome', function () {
         ),
         'fallback', false, 'Layer 7 Clear',
     ];
-    yield 'fallback / threat' => [
+    yield 'fallback / threat (embedding throws)' => [
         fn () => tps_processor(
             tps_embeddingFails(),
             tps_analyzes(ThreatResult::threat('High value at ACME Corp ($500.00)', ['merchant' => 'ACME Corp', 'amount' => 500.00])),
             tps_cacheUnused()
         ),
         'fallback', true, 'High value',
+    ];
+    yield 'fallback / clear (AI driver throws)' => [
+        fn () => tps_processor(
+            tps_embeds($v),
+            tps_analyzes(ThreatResult::clear(['merchant' => 'ACME Corp', 'amount' => 150.00])),
+            tps_cacheMiss(),
+            tps_aiFails(),
+        ),
+        'fallback', false, 'Layer 7 Clear',
     ];
 });
 
@@ -195,8 +240,8 @@ it('increments sentinel_metrics_cache_hit_count on a cache hit', function () use
 
 it('increments sentinel_metrics_cache_miss_count on a cache miss', function () use ($baseTxn, $vector) {
     tps_allowRedis();
-    $clear = ThreatResult::clear(['merchant' => 'ACME Corp', 'amount' => 150.00]);
-    tps_processor(tps_embeds($vector), tps_analyzes($clear), tps_cacheMiss())->process($baseTxn);
+    $ai = tps_ai(['narrative' => 'Layer 7 Clear', 'risk_level' => 'low']);
+    tps_processor(tps_embeds($vector), tps_analyzerUnused(), tps_cacheMiss(), $ai)->process($baseTxn);
 
     expect(Cache::get('sentinel_metrics_cache_miss_count'))->toBe(1);
     Mockery::close();
@@ -211,13 +256,22 @@ it('increments sentinel_metrics_fallback_count when the embedding call fails', f
     Mockery::close();
 });
 
+it('increments sentinel_metrics_fallback_count when the AI driver fails', function () use ($baseTxn, $vector) {
+    tps_allowRedis();
+    $clear = ThreatResult::clear(['merchant' => 'ACME Corp', 'amount' => 150.00]);
+    tps_processor(tps_embeds($vector), tps_analyzes($clear), tps_cacheMiss(), tps_aiFails())->process($baseTxn);
+
+    expect(Cache::get('sentinel_metrics_fallback_count'))->toBe(1);
+    Mockery::close();
+});
+
 it('increments sentinel_metrics_threat_count only when the result is a threat', function (bool $isThreat) use ($baseTxn, $vector) {
     tps_allowRedis();
-    $result = $isThreat
-        ? ThreatResult::threat('High value at ACME Corp ($500.00)', ['merchant' => 'ACME Corp', 'amount' => 500.00])
-        : ThreatResult::clear(['merchant' => 'ACME Corp', 'amount' => 150.00]);
+    $ai = $isThreat
+        ? tps_ai(['narrative' => 'High value at ACME Corp ($500.00)', 'risk_level' => 'high'])
+        : tps_ai(['narrative' => 'Layer 7 Clear', 'risk_level' => 'low']);
 
-    tps_processor(tps_embeds($vector), tps_analyzes($result), tps_cacheMiss())->process($baseTxn);
+    tps_processor(tps_embeds($vector), tps_analyzerUnused(), tps_cacheMiss(), $ai)->process($baseTxn);
 
     $isThreat
         ? expect(Cache::get('sentinel_metrics_threat_count'))->toBe(1)
@@ -233,7 +287,7 @@ it('increments sentinel_metrics_threat_count only when the result is a threat', 
 
 it('upserts threat_level "high" and isThreat true on a threatening cache miss', function () use ($baseTxn, $vector) {
     tps_allowRedis();
-    $threat = ThreatResult::threat('High value', ['merchant' => 'ACME Corp', 'amount' => 500.00]);
+    $ai = tps_ai(['narrative' => 'High value', 'risk_level' => 'high']);
     $captured = null;
 
     $vectorCache = Mockery::mock(VectorCacheService::class);
@@ -246,7 +300,7 @@ it('upserts threat_level "high" and isThreat true on a threatening cache miss', 
             return true;
         });
 
-    tps_processor(tps_embeds($vector), tps_analyzes($threat), $vectorCache)->process($baseTxn);
+    tps_processor(tps_embeds($vector), tps_analyzerUnused(), $vectorCache, $ai)->process($baseTxn);
 
     expect($captured['threat_level'])->toBe('high')
         ->and($captured['analysis']['isThreat'])->toBeTrue();
@@ -255,7 +309,7 @@ it('upserts threat_level "high" and isThreat true on a threatening cache miss', 
 
 it('upserts threat_level "low" and isThreat false on a clear cache miss', function () use ($baseTxn, $vector) {
     tps_allowRedis();
-    $clear = ThreatResult::clear(['merchant' => 'ACME Corp', 'amount' => 150.00]);
+    $ai = tps_ai(['narrative' => 'Layer 7 Clear', 'risk_level' => 'low']);
     $captured = null;
 
     $vectorCache = Mockery::mock(VectorCacheService::class);
@@ -268,7 +322,7 @@ it('upserts threat_level "low" and isThreat false on a clear cache miss', functi
             return true;
         });
 
-    tps_processor(tps_embeds($vector), tps_analyzes($clear), $vectorCache)->process($baseTxn);
+    tps_processor(tps_embeds($vector), tps_analyzerUnused(), $vectorCache, $ai)->process($baseTxn);
 
     expect($captured['threat_level'])->toBe('low')
         ->and($captured['analysis']['isThreat'])->toBeFalse();
@@ -278,7 +332,7 @@ it('upserts threat_level "low" and isThreat false on a clear cache miss', functi
 it('upserts the current policy_epoch with the analysis result', function () use ($baseTxn, $vector) {
     tps_allowRedis();
     Cache::put('sentinel_policy_epoch', 'epoch-abc123');
-    $clear = ThreatResult::clear(['merchant' => 'ACME Corp', 'amount' => 150.00]);
+    $ai = tps_ai(['narrative' => 'Layer 7 Clear', 'risk_level' => 'low']);
     $captured = null;
 
     $vectorCache = Mockery::mock(VectorCacheService::class);
@@ -291,7 +345,7 @@ it('upserts the current policy_epoch with the analysis result', function () use 
             return true;
         });
 
-    tps_processor(tps_embeds($vector), tps_analyzes($clear), $vectorCache)->process($baseTxn);
+    tps_processor(tps_embeds($vector), tps_analyzerUnused(), $vectorCache, $ai)->process($baseTxn);
 
     expect($captured['policy_epoch'])->toBe('epoch-abc123');
     Mockery::close();
@@ -300,7 +354,7 @@ it('upserts the current policy_epoch with the analysis result', function () use 
 it('upserts null policy_epoch when no ingest has run', function () use ($baseTxn, $vector) {
     tps_allowRedis();
     // Cache is flushed in beforeEach — no epoch set
-    $clear = ThreatResult::clear(['merchant' => 'ACME Corp', 'amount' => 150.00]);
+    $ai = tps_ai(['narrative' => 'Layer 7 Clear', 'risk_level' => 'low']);
     $captured = null;
 
     $vectorCache = Mockery::mock(VectorCacheService::class);
@@ -313,7 +367,7 @@ it('upserts null policy_epoch when no ingest has run', function () use ($baseTxn
             return true;
         });
 
-    tps_processor(tps_embeds($vector), tps_analyzes($clear), $vectorCache)->process($baseTxn);
+    tps_processor(tps_embeds($vector), tps_analyzerUnused(), $vectorCache, $ai)->process($baseTxn);
 
     expect($captured['policy_epoch'])->toBeNull();
     Mockery::close();
@@ -345,7 +399,7 @@ it('serves a cache hit when the stored epoch matches the current epoch', functio
 it('re-analyzes and re-upserts when the cached epoch is stale', function () use ($baseTxn, $vector) {
     tps_allowRedis();
     Cache::put('sentinel_policy_epoch', 'epoch-v2');
-    $clear = ThreatResult::clear(['merchant' => 'ACME Corp', 'amount' => 150.00]);
+    $ai = tps_ai(['narrative' => 'Layer 7 Clear', 'risk_level' => 'low']);
 
     $vectorCache = Mockery::mock(VectorCacheService::class);
     $vectorCache->shouldReceive('searchNamespace')->andReturn([[
@@ -358,8 +412,7 @@ it('re-analyzes and re-upserts when the cached epoch is stale', function () use 
     ]]);
     $vectorCache->shouldReceive('upsertNamespace')->once()->andReturn(true);
 
-    $analyzer = tps_analyzes($clear);
-    $result = tps_processor(tps_embeds($vector), $analyzer, $vectorCache)->process($baseTxn);
+    $result = tps_processor(tps_embeds($vector), tps_analyzerUnused(), $vectorCache, $ai)->process($baseTxn);
 
     expect($result['source'])->toBe('cache_miss');
     Mockery::close();
@@ -389,7 +442,7 @@ it('serves a cache hit when no ingest has ever run (both epochs null)', function
 it('re-analyzes a pre-epoch entry once ingest has run', function () use ($baseTxn, $vector) {
     tps_allowRedis();
     Cache::put('sentinel_policy_epoch', 'epoch-v1'); // ingest has run
-    $clear = ThreatResult::clear(['merchant' => 'ACME Corp', 'amount' => 150.00]);
+    $ai = tps_ai(['narrative' => 'Old verdict without policy grounding', 'risk_level' => 'low']);
 
     $vectorCache = Mockery::mock(VectorCacheService::class);
     $vectorCache->shouldReceive('searchNamespace')->andReturn([[
@@ -402,7 +455,7 @@ it('re-analyzes a pre-epoch entry once ingest has run', function () use ($baseTx
     ]]);
     $vectorCache->shouldReceive('upsertNamespace')->once()->andReturn(true);
 
-    $result = tps_processor(tps_embeds($vector), tps_analyzes($clear), $vectorCache)->process($baseTxn);
+    $result = tps_processor(tps_embeds($vector), tps_analyzerUnused(), $vectorCache, $ai)->process($baseTxn);
 
     expect($result['source'])->toBe('cache_miss');
     Mockery::close();
@@ -428,8 +481,8 @@ it('persists a Transaction with correct fields on a cache hit', function () use 
 
 it('persists a Transaction with correct source on a cache miss', function () use ($baseTxn, $vector) {
     tps_allowRedis();
-    $clear = ThreatResult::clear(['merchant' => 'ACME Corp', 'amount' => 150.00]);
-    tps_processor(tps_embeds($vector), tps_analyzes($clear), tps_cacheMiss())->process($baseTxn);
+    $ai = tps_ai(['narrative' => 'Layer 7 Clear', 'risk_level' => 'low']);
+    tps_processor(tps_embeds($vector), tps_analyzerUnused(), tps_cacheMiss(), $ai)->process($baseTxn);
 
     $txn = Transaction::first();
     expect($txn)->not->toBeNull()
@@ -441,8 +494,8 @@ it('persists a Transaction with correct source on a cache miss', function () use
 
 it('marks the Transaction as a threat when the result is a threat', function () use ($baseTxn, $vector) {
     tps_allowRedis();
-    $threat = ThreatResult::threat('High value', ['merchant' => 'ACME Corp', 'amount' => 500.00]);
-    tps_processor(tps_embeds($vector), tps_analyzes($threat), tps_cacheMiss())
+    $ai = tps_ai(['narrative' => 'High value', 'risk_level' => 'critical']);
+    tps_processor(tps_embeds($vector), tps_analyzerUnused(), tps_cacheMiss(), $ai)
         ->process([...$baseTxn, 'amount' => 500.00]);
 
     expect(Transaction::first()->is_threat)->toBeTrue();
@@ -466,9 +519,9 @@ it('records no metrics and no Transaction when observe is false (cache hit)', fu
 
 it('records no metrics and no Transaction when observe is false (cache miss)', function () use ($baseTxn, $vector) {
     Redis::shouldReceive('executeRaw')->never();
-    $clear = ThreatResult::clear(['merchant' => 'ACME Corp', 'amount' => 150.00]);
+    $ai = tps_ai(['narrative' => 'Layer 7 Clear', 'risk_level' => 'low']);
 
-    $result = tps_processor(tps_embeds($vector), tps_analyzes($clear), tps_cacheMiss())
+    $result = tps_processor(tps_embeds($vector), tps_analyzerUnused(), tps_cacheMiss(), $ai)
         ->process($baseTxn, false);
 
     expect($result['source'])->toBe('cache_miss')
@@ -480,7 +533,7 @@ it('records no metrics and no Transaction when observe is false (cache miss)', f
 
 it('still upserts into the vector cache when observe is false', function () use ($baseTxn, $vector) {
     Redis::shouldReceive('executeRaw')->never();
-    $clear = ThreatResult::clear(['merchant' => 'ACME Corp', 'amount' => 150.00]);
+    $ai = tps_ai(['narrative' => 'Layer 7 Clear', 'risk_level' => 'low']);
     $upserted = false;
 
     $vectorCache = Mockery::mock(VectorCacheService::class);
@@ -491,7 +544,7 @@ it('still upserts into the vector cache when observe is false', function () use 
         return true;
     });
 
-    tps_processor(tps_embeds($vector), tps_analyzes($clear), $vectorCache)->process($baseTxn, false);
+    tps_processor(tps_embeds($vector), tps_analyzerUnused(), $vectorCache, $ai)->process($baseTxn, false);
 
     expect($upserted)->toBeTrue();
     Mockery::close();
@@ -502,9 +555,9 @@ it('still upserts into the vector cache when observe is false', function () use 
 it('falls back to merchant_name when the merchant field is absent', function () use ($vector) {
     tps_allowRedis();
     $txn = ['id' => 'txn-name-fb', 'merchant_name' => 'Fallback Corp', 'amount' => 25.00, 'currency' => 'USD'];
-    $clear = ThreatResult::clear(['merchant' => 'Fallback Corp', 'amount' => 25.00]);
+    $ai = tps_ai(['narrative' => 'Layer 7 Clear: Fallback Corp - OK', 'risk_level' => 'low']);
 
-    tps_processor(tps_embeds($vector), tps_analyzes($clear), tps_cacheMiss())->process($txn);
+    tps_processor(tps_embeds($vector), tps_analyzerUnused(), tps_cacheMiss(), $ai)->process($txn);
 
     expect(Transaction::first()->merchant)->toBe('Fallback Corp');
     Mockery::close();
@@ -513,9 +566,9 @@ it('falls back to merchant_name when the merchant field is absent', function () 
 it('stores null amount in the DB when the transaction has no amount field', function () use ($vector) {
     tps_allowRedis();
     $txn = ['id' => 'txn-no-amt', 'merchant' => 'ACME Corp', 'currency' => 'EUR'];
-    $clear = ThreatResult::clear(['merchant' => 'ACME Corp', 'amount' => 0]);
+    $ai = tps_ai(['narrative' => 'Layer 7 Clear', 'risk_level' => 'low']);
 
-    tps_processor(tps_embeds($vector), tps_analyzes($clear), tps_cacheMiss())->process($txn);
+    tps_processor(tps_embeds($vector), tps_analyzerUnused(), tps_cacheMiss(), $ai)->process($txn);
 
     expect(Transaction::first()->amount)->toBeNull();
     Mockery::close();
@@ -524,9 +577,9 @@ it('stores null amount in the DB when the transaction has no amount field', func
 it('auto-generates a txn_id when none is provided', function () use ($vector) {
     tps_allowRedis();
     $txn = ['merchant' => 'No ID Corp', 'amount' => 10.00, 'currency' => 'AUD'];
-    $clear = ThreatResult::clear(['merchant' => 'No ID Corp', 'amount' => 10.00]);
+    $ai = tps_ai(['narrative' => 'Layer 7 Clear', 'risk_level' => 'low']);
 
-    tps_processor(tps_embeds($vector), tps_analyzes($clear), tps_cacheMiss())->process($txn);
+    tps_processor(tps_embeds($vector), tps_analyzerUnused(), tps_cacheMiss(), $ai)->process($txn);
 
     expect(Transaction::first()->txn_id)->toStartWith('txn_');
     Mockery::close();

@@ -1,5 +1,6 @@
 <?php
 
+use App\Contracts\ComplianceDriver;
 use App\Services\EmbeddingService;
 use App\Services\ThreatAnalysisService;
 use App\Services\ThreatResult;
@@ -65,6 +66,45 @@ function mockStreamWithOneMessage(array $messageOverrides = []): \Mockery\MockIn
 }
 
 /**
+ * Mock the Tier 2 AI driver for a successful cache-miss analysis.
+ */
+function mockDriverSuccess(string $riskLevel, string $narrative): ComplianceDriver
+{
+    $m = Mockery::mock(ComplianceDriver::class);
+    $m->shouldReceive('analyzeTransaction')->andReturn([
+        'narrative' => $narrative,
+        'risk_level' => $riskLevel,
+        'policy_refs' => [],
+        'confidence' => 0.9,
+    ]);
+
+    return $m;
+}
+
+/**
+ * Mock the Tier 2 AI driver throwing (routes to Tier 3 rule-based fallback).
+ */
+function mockDriverFails(): ComplianceDriver
+{
+    $m = Mockery::mock(ComplianceDriver::class);
+    $m->shouldReceive('analyzeTransaction')->andThrow(new \RuntimeException('Gemini Flash unavailable'));
+
+    return $m;
+}
+
+/**
+ * Mock the Tier 2 AI driver for paths where it must not be called
+ * (cache hit, or embedding/vector failure before the AI call is reached).
+ */
+function mockDriverUnused(): ComplianceDriver
+{
+    $m = Mockery::mock(ComplianceDriver::class);
+    $m->shouldNotReceive('analyzeTransaction');
+
+    return $m;
+}
+
+/**
  * Run sentinel:watch, catching the loop-termination exception.
  * Any other exception is re-thrown so real errors still fail tests.
  */
@@ -107,6 +147,7 @@ it('skips the analyzer on a cache hit', function () {
     $this->app->instance(EmbeddingService::class, $embedding);
     $this->app->instance(VectorCacheService::class, $vectorCache);
     $this->app->instance(ThreatAnalysisService::class, $analyzer);
+    $this->app->instance(ComplianceDriver::class, mockDriverUnused());
 
     runWatcher($this);
 
@@ -135,6 +176,7 @@ it('increments the cache_hit metric on a hit', function () {
     $this->app->instance(EmbeddingService::class, $embedding);
     $this->app->instance(VectorCacheService::class, $vectorCache);
     $this->app->instance(ThreatAnalysisService::class, $analyzer);
+    $this->app->instance(ComplianceDriver::class, mockDriverUnused());
 
     runWatcher($this);
 
@@ -143,7 +185,7 @@ it('increments the cache_hit metric on a hit', function () {
 
 // ─── Cache miss path ─────────────────────────────────────────────────────────
 
-it('calls the analyzer and upserts the result on a cache miss', function () {
+it('calls the AI driver and upserts the result on a cache miss', function () {
     $fakeVector = array_fill(0, 1536, 0.3);
 
     $embedding = Mockery::mock(EmbeddingService::class);
@@ -162,14 +204,13 @@ it('calls the analyzer and upserts the result on a cache miss', function () {
         );
 
     $analyzer = Mockery::mock(ThreatAnalysisService::class);
-    $analyzer->shouldReceive('analyze')
-        ->once()
-        ->andReturn(ThreatResult::clear(['merchant' => 'Starbucks', 'amount' => 12.50]));
+    $analyzer->shouldNotReceive('analyze');
 
     $this->app->instance(TransactionStreamService::class, mockStreamWithOneMessage());
     $this->app->instance(EmbeddingService::class, $embedding);
     $this->app->instance(VectorCacheService::class, $vectorCache);
     $this->app->instance(ThreatAnalysisService::class, $analyzer);
+    $this->app->instance(ComplianceDriver::class, mockDriverSuccess('low', 'Layer 7 Clear: Starbucks - OK'));
 
     runWatcher($this);
 
@@ -189,13 +230,13 @@ it('increments the cache_miss metric on a miss', function () {
     $vectorCache->shouldReceive('upsertNamespace')->andReturn(true);
 
     $analyzer = Mockery::mock(ThreatAnalysisService::class);
-    $analyzer->shouldReceive('analyze')
-        ->andReturn(ThreatResult::clear(['merchant' => 'Starbucks', 'amount' => 12.50]));
+    $analyzer->shouldNotReceive('analyze');
 
     $this->app->instance(TransactionStreamService::class, mockStreamWithOneMessage());
     $this->app->instance(EmbeddingService::class, $embedding);
     $this->app->instance(VectorCacheService::class, $vectorCache);
     $this->app->instance(ThreatAnalysisService::class, $analyzer);
+    $this->app->instance(ComplianceDriver::class, mockDriverSuccess('low', 'Layer 7 Clear: Starbucks - OK'));
 
     runWatcher($this);
 
@@ -221,13 +262,13 @@ it('upserts threat_level as "high" when the result is a threat', function () {
         );
 
     $analyzer = Mockery::mock(ThreatAnalysisService::class);
-    $analyzer->shouldReceive('analyze')
-        ->andReturn(ThreatResult::threat('High value transaction at BigBank ($500.00)', ['merchant' => 'BigBank', 'amount' => 500.00]));
+    $analyzer->shouldNotReceive('analyze');
 
     $this->app->instance(TransactionStreamService::class, mockStreamWithOneMessage(['amount' => 500.00, 'merchant' => 'BigBank']));
     $this->app->instance(EmbeddingService::class, $embedding);
     $this->app->instance(VectorCacheService::class, $vectorCache);
     $this->app->instance(ThreatAnalysisService::class, $analyzer);
+    $this->app->instance(ComplianceDriver::class, mockDriverSuccess('high', 'High value transaction at BigBank ($500.00)'));
 
     runWatcher($this);
 
@@ -255,6 +296,7 @@ it('falls back to direct analysis when the embedding call fails', function () {
     $this->app->instance(EmbeddingService::class, $embedding);
     $this->app->instance(VectorCacheService::class, $vectorCache);
     $this->app->instance(ThreatAnalysisService::class, $analyzer);
+    $this->app->instance(ComplianceDriver::class, mockDriverUnused());
 
     runWatcher($this);
 
@@ -278,6 +320,7 @@ it('increments the fallback metric when the vector path throws', function () {
     $this->app->instance(EmbeddingService::class, $embedding);
     $this->app->instance(VectorCacheService::class, $vectorCache);
     $this->app->instance(ThreatAnalysisService::class, $analyzer);
+    $this->app->instance(ComplianceDriver::class, mockDriverUnused());
 
     runWatcher($this);
 
@@ -304,6 +347,7 @@ it('falls back when the vector search itself throws', function () {
     $this->app->instance(EmbeddingService::class, $embedding);
     $this->app->instance(VectorCacheService::class, $vectorCache);
     $this->app->instance(ThreatAnalysisService::class, $analyzer);
+    $this->app->instance(ComplianceDriver::class, mockDriverUnused());
 
     runWatcher($this);
 
@@ -335,6 +379,7 @@ it('displays a cached threat result on cache hit', function () {
     $this->app->instance(EmbeddingService::class, $embedding);
     $this->app->instance(VectorCacheService::class, $vectorCache);
     $this->app->instance(ThreatAnalysisService::class, $analyzer);
+    $this->app->instance(ComplianceDriver::class, mockDriverUnused());
 
     runWatcher($this);
 
@@ -360,6 +405,7 @@ it('falls back when fingerprint creation throws', function () {
     $this->app->instance(EmbeddingService::class, $embedding);
     $this->app->instance(VectorCacheService::class, $vectorCache);
     $this->app->instance(ThreatAnalysisService::class, $analyzer);
+    $this->app->instance(ComplianceDriver::class, mockDriverUnused());
 
     runWatcher($this);
 
@@ -386,6 +432,7 @@ it('falls back when upsert throws during cache miss', function () {
     $this->app->instance(EmbeddingService::class, $embedding);
     $this->app->instance(VectorCacheService::class, $vectorCache);
     $this->app->instance(ThreatAnalysisService::class, $analyzer);
+    $this->app->instance(ComplianceDriver::class, mockDriverSuccess('low', 'Layer 7 Clear: Starbucks - OK'));
 
     runWatcher($this);
 
@@ -430,13 +477,13 @@ it('handles transactions with missing optional fields gracefully', function () {
     $vectorCache->shouldReceive('upsertNamespace')->andReturn(true);
 
     $analyzer = Mockery::mock(ThreatAnalysisService::class);
-    $analyzer->shouldReceive('analyze')
-        ->andReturn(ThreatResult::clear(['merchant' => 'Unknown', 'amount' => 5.00]));
+    $analyzer->shouldNotReceive('analyze');
 
     $this->app->instance(TransactionStreamService::class, $stream);
     $this->app->instance(EmbeddingService::class, $embedding);
     $this->app->instance(VectorCacheService::class, $vectorCache);
     $this->app->instance(ThreatAnalysisService::class, $analyzer);
+    $this->app->instance(ComplianceDriver::class, mockDriverSuccess('low', 'Layer 7 Clear: Unknown - OK'));
 
     runWatcher($this);
 
@@ -480,6 +527,7 @@ it('pushes a transaction entry to the redis feed on a cache hit', function () {
     $this->app->instance(EmbeddingService::class, $embedding);
     $this->app->instance(VectorCacheService::class, $vectorCache);
     $this->app->instance(ThreatAnalysisService::class, $analyzer);
+    $this->app->instance(ComplianceDriver::class, mockDriverUnused());
 
     runWatcher($this);
 
@@ -523,6 +571,7 @@ it('records is_threat true in the feed for a cached threat', function () {
     $this->app->instance(EmbeddingService::class, $embedding);
     $this->app->instance(VectorCacheService::class, $vectorCache);
     $this->app->instance(ThreatAnalysisService::class, $analyzer);
+    $this->app->instance(ComplianceDriver::class, mockDriverUnused());
 
     runWatcher($this);
 
@@ -555,13 +604,13 @@ it('pushes a transaction entry to the redis feed on a cache miss', function () {
     $vectorCache->shouldReceive('upsertNamespace')->andReturn(true);
 
     $analyzer = Mockery::mock(ThreatAnalysisService::class);
-    $analyzer->shouldReceive('analyze')
-        ->andReturn(ThreatResult::clear(['merchant' => 'Starbucks', 'amount' => 12.50]));
+    $analyzer->shouldNotReceive('analyze');
 
     $this->app->instance(TransactionStreamService::class, mockStreamWithOneMessage());
     $this->app->instance(EmbeddingService::class, $embedding);
     $this->app->instance(VectorCacheService::class, $vectorCache);
     $this->app->instance(ThreatAnalysisService::class, $analyzer);
+    $this->app->instance(ComplianceDriver::class, mockDriverSuccess('low', 'Layer 7 Clear: Starbucks - OK'));
 
     runWatcher($this);
 
@@ -597,6 +646,7 @@ it('pushes a transaction entry to the redis feed on the fallback path', function
     $this->app->instance(EmbeddingService::class, $embedding);
     $this->app->instance(VectorCacheService::class, $vectorCache);
     $this->app->instance(ThreatAnalysisService::class, $analyzer);
+    $this->app->instance(ComplianceDriver::class, mockDriverUnused());
 
     runWatcher($this);
 
@@ -628,13 +678,13 @@ it('trims the feed list to FEED_LENGTH after each push', function () {
     $vectorCache->shouldReceive('upsertNamespace')->andReturn(true);
 
     $analyzer = Mockery::mock(ThreatAnalysisService::class);
-    $analyzer->shouldReceive('analyze')
-        ->andReturn(ThreatResult::clear(['merchant' => 'Starbucks', 'amount' => 12.50]));
+    $analyzer->shouldNotReceive('analyze');
 
     $this->app->instance(TransactionStreamService::class, mockStreamWithOneMessage());
     $this->app->instance(EmbeddingService::class, $embedding);
     $this->app->instance(VectorCacheService::class, $vectorCache);
     $this->app->instance(ThreatAnalysisService::class, $analyzer);
+    $this->app->instance(ComplianceDriver::class, mockDriverSuccess('low', 'Layer 7 Clear: Starbucks - OK'));
 
     runWatcher($this);
 
@@ -685,13 +735,13 @@ it('increments metrics for each transaction independently', function () {
     $vectorCache->shouldReceive('upsertNamespace')->andReturn(true);
 
     $analyzer = Mockery::mock(ThreatAnalysisService::class);
-    $analyzer->shouldReceive('analyze')
-        ->andReturn(ThreatResult::clear(['merchant' => 'Starbucks', 'amount' => 12.50]));
+    $analyzer->shouldNotReceive('analyze');
 
     $this->app->instance(TransactionStreamService::class, $stream);
     $this->app->instance(EmbeddingService::class, $embedding);
     $this->app->instance(VectorCacheService::class, $vectorCache);
     $this->app->instance(ThreatAnalysisService::class, $analyzer);
+    $this->app->instance(ComplianceDriver::class, mockDriverSuccess('low', 'Layer 7 Clear: Starbucks - OK'));
 
     runWatcher($this);
 
@@ -863,16 +913,16 @@ it('writes the pending count to the lag key after every readGroup cycle', functi
 
     $vectorCache = Mockery::mock(VectorCacheService::class);
     $vectorCache->shouldReceive('searchNamespace')->andReturn([]);
-    $vectorCache->shouldReceive('upsertNamespace')->andReturnNull();
+    $vectorCache->shouldReceive('upsertNamespace')->andReturn(true);
 
     $analyzer = Mockery::mock(ThreatAnalysisService::class);
-    $analyzer->shouldReceive('analyze')
-        ->andReturn(ThreatResult::clear(['merchant' => 'Costco', 'amount' => 9.99]));
+    $analyzer->shouldNotReceive('analyze');
 
     $this->app->instance(TransactionStreamService::class, $stream);
     $this->app->instance(EmbeddingService::class, $embedding);
     $this->app->instance(VectorCacheService::class, $vectorCache);
     $this->app->instance(ThreatAnalysisService::class, $analyzer);
+    $this->app->instance(ComplianceDriver::class, mockDriverSuccess('low', 'Layer 7 Clear: Costco - OK'));
 
     runWatcher($this);
 

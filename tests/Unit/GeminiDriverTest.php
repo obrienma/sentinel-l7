@@ -324,6 +324,74 @@ it('logs quality score 2 and no warning when exactly two signals pass', function
     (new GeminiDriver($embedding, $vectorCache))->analyze(geminiAxiom());
 });
 
+// ─── analyzeTransaction() ──────────────────────────────────────────────────────
+
+function geminiTransaction(array $overrides = []): array
+{
+    return array_merge([
+        'id' => 'txn-42',
+        'merchant' => 'ACME Corp',
+        'amount' => 500.00,
+        'currency' => 'AUD',
+    ], $overrides);
+}
+
+it('returns a parsed narrative from a well-formed transaction analysis response', function () {
+    $result = mockGeminiDriver(geminiResponse([
+        'narrative' => 'High value transaction requires review.',
+        'risk_level' => 'high',
+        'policy_refs' => ['AML-3'],
+        'confidence' => 0.88,
+    ]))->analyzeTransaction(geminiTransaction());
+
+    expect($result['narrative'])->toBe('High value transaction requires review.')
+        ->and($result['risk_level'])->toBe('high')
+        ->and($result['confidence'])->toBe(0.88);
+});
+
+it('builds the transaction prompt from the transaction-compliance-analysis template', function () {
+    $captured = null;
+
+    Http::fake(function ($request) use (&$captured) {
+        $captured = $request->data()['contents'][0]['parts'][0]['text'];
+
+        return Http::response(geminiResponse([
+            'narrative' => 'OK.', 'risk_level' => 'low', 'policy_refs' => [], 'confidence' => 0.5,
+        ]), 200);
+    });
+
+    $embedding = Mockery::mock(EmbeddingService::class);
+    $embedding->shouldReceive('embed')->andReturn(array_fill(0, 1536, 0.1));
+    $vectorCache = Mockery::mock(VectorCacheService::class);
+    $vectorCache->shouldReceive('searchNamespace')->andReturn([]);
+
+    (new GeminiDriver($embedding, $vectorCache))->analyzeTransaction(geminiTransaction());
+
+    expect($captured)
+        ->toContain('Merchant: ACME Corp')
+        ->toContain('Amount: 500')
+        ->toContain('Currency: AUD')
+        ->not->toContain('Anomaly score');
+});
+
+it('does not filter by domain for a transaction (transactions carry no domain)', function () {
+    Http::fake(['https://generativelanguage.googleapis.com/*' => Http::response(
+        geminiResponse(['narrative' => 'OK.', 'risk_level' => 'low', 'policy_refs' => [], 'confidence' => 0.5]),
+        200
+    )]);
+
+    $embedding = Mockery::mock(EmbeddingService::class);
+    $embedding->shouldReceive('embed')->andReturn(array_fill(0, 1536, 0.1));
+
+    $vectorCache = Mockery::mock(VectorCacheService::class);
+    $vectorCache->shouldReceive('searchNamespace')
+        ->once()
+        ->withArgs(fn ($vec, $ns, $threshold, $topK, $filter) => $ns === 'policies' && $filter === null)
+        ->andReturn([]);
+
+    (new GeminiDriver($embedding, $vectorCache))->analyzeTransaction(geminiTransaction());
+});
+
 // ─── Retrieval coverage logging ───────────────────────────────────────────────
 
 it('logs mean_score and does not flag under_indexed when domain filter returns 2 or more chunks', function () {

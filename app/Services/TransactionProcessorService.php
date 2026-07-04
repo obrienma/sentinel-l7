@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Contracts\ComplianceDriver;
 use App\Models\Transaction;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Redis;
@@ -18,6 +19,7 @@ class TransactionProcessorService
         private readonly EmbeddingService $embedding,
         private readonly ThreatAnalysisService $analyzer,
         private readonly VectorCacheService $vectorCache,
+        private readonly ComplianceDriver $driver,
     ) {}
 
     /**
@@ -76,20 +78,24 @@ class TransactionProcessorService
                 return $this->summary('cache_hit', $isThreat, $message, $startTime);
             }
 
-            // Cache miss — full analysis then store result
-            $result = $this->analyzer->analyze($data);
+            // Cache miss — Tier 2: Gemini/OpenRouter analysis with policy RAG (ADR-0007)
+            $aiResult = $this->driver->analyzeTransaction($data);
+            $isThreat = ($aiResult['risk_level'] ?? 'unknown') !== 'low';
+            $message = $aiResult['narrative'] ?: ($isThreat
+                ? "Compliance risk detected at {$merchant} ({$aiResult['risk_level']})"
+                : "Layer 7 Clear: {$merchant} - OK");
 
             $this->vectorCache->upsertNamespace(
                 "txn_{$txnId}",
                 $vector,
                 [
                     'analysis' => [
-                        'isThreat' => $result->isThreat,
-                        'message' => $result->message,
-                        'threat_level' => $result->isThreat ? 'high' : 'low',
+                        'isThreat' => $isThreat,
+                        'message' => $message,
+                        'threat_level' => $isThreat ? 'high' : 'low',
                     ],
                     'timestamp' => now()->toIso8601String(),
-                    'threat_level' => $result->isThreat ? 'high' : 'low',
+                    'threat_level' => $isThreat ? 'high' : 'low',
                     'policy_epoch' => Cache::get('sentinel_policy_epoch'),
                 ],
                 self::NAMESPACE,
@@ -100,17 +106,16 @@ class TransactionProcessorService
             }
             $source = 'cache_miss';
         } catch (\Throwable) {
-            // Embedding or vector cache unavailable — fall back to direct analysis.
+            // Embedding, vector cache, or AI analysis unavailable — fall back to rule-based Tier 3.
             // ThreatAnalysisService failure is intentionally uncaught and propagates.
             $result = $this->analyzer->analyze($data);
+            $isThreat = $result->isThreat;
+            $message = $result->message;
             if ($observe) {
                 $this->recordMetric('fallback', microtime(true) - $startTime);
             }
             $source = 'fallback';
         }
-
-        $isThreat = $result->isThreat;
-        $message = $result->message;
 
         if ($observe) {
             if ($isThreat) {

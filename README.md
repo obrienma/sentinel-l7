@@ -446,13 +446,8 @@ No dashboard change is needed once a driver call succeeds — the queries are al
 * [ ] **Ollama embedding threshold re-validation (ADR-0015/ADR-0025)** — cutover is live (`SENTINEL_EMBEDDING_DRIVER=ollama`, Upstash Vector index recreated at 768-dim, `sentinel:ingest` re-run against nomic-embed-text v1.5); still need to re-validate `UPSTASH_VECTOR_THRESHOLD` against nomic's score distribution before treating `ollama` as the production default
 * [ ] **Telemetry namespace** — add a third named Upstash Vector namespace (e.g. `telemetry`) following the pattern established in ADR-0026; no implicit/default namespace usage anywhere in the codebase
 
-## 🐛 Known issues
+### 🐛 Known issues
 
-- [ ] **ADR-0007 vs. implementation drift** (sentinel-l7): ADR-0007 documents
-      Tier 2 as "Gemini Flash + policy RAG," but `TransactionProcessorService`E
-      calls the rule-based `ThreatAnalysisService` on cache miss — no LLM
-      involvement in that pipeline. Needs a decision: wire Gemini in, or
-      correct the ADR to document the two-pipeline split as intentional.
 - [ ] **No rule-based fallback on LLM failure** (sentinel-l7):
       `AxiomProcessorService` degrades to `risk_level: unknown` / `narrative:
       null` on Gemini/OpenRouter failure — no Tier 3 verdict exists for this
@@ -481,6 +476,7 @@ No dashboard change is needed once a driver call succeeds — the queries are al
 * Retrieval coverage logging — `mean_score` and `under_indexed` per RAG query; `Log::warning` fires when a domain filter returns < 2 chunks
 * EmbeddingDriver stack (ADR-0025) — `GeminiEmbeddingDriver`, `OllamaEmbeddingDriver` (nomic-embed-text v1.5, 768-dim, task-prefixed `search_document`/`search_query` inputs), `EmbeddingManager` (Service Manager pattern), swap via `SENTINEL_EMBEDDING_DRIVER`; `EmbeddingService` now delegates to the resolved driver instead of calling Gemini directly. Live in this environment: Upstash Vector index recreated at 768-dim, policy KB re-ingested against Ollama.
 * Named Vector namespaces (ADR-0026) — `VectorCacheService` no longer has any bare/default-namespace methods; transaction semantic cache moved from Upstash's implicit default namespace to an explicit `transactions` namespace, matching `policies`. Sets the pattern for future namespaces (e.g. telemetry) and tenant-prefixed namespacing.
+* ADR-0007 Tier 2 drift closed — `TransactionProcessorService` now calls `ComplianceDriver::analyzeTransaction()` (Gemini/OpenRouter + policy RAG) on a cache miss instead of the rule-based `ThreatAnalysisService`; `ThreatAnalysisService` is reserved for Tier 3 (infra failure) as ADR-0007 originally specified. New `transaction-compliance-analysis` prompt added for the transaction-shaped query.
 
 #### 🔷 Axiom / Synapse-L4 Integration
 * Synapse-L4 Axiom ingestion — `synapse:axioms` Redis stream + `sentinel:watch-axioms` worker
