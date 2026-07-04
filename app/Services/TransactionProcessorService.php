@@ -20,6 +20,7 @@ class TransactionProcessorService
         private readonly ThreatAnalysisService $analyzer,
         private readonly VectorCacheService $vectorCache,
         private readonly ComplianceDriver $driver,
+        private readonly ComplianceManager $complianceManager,
     ) {}
 
     /**
@@ -38,9 +39,23 @@ class TransactionProcessorService
      * AnalyzeTransaction MCP tool) only ever read source/is_threat/message/
      * elapsed_ms and are unaffected.
      *
+     * $driverOverride forces a specific ComplianceManager driver (e.g.
+     * 'gemini', 'openrouter', 'ollama') instead of the app-wide configured
+     * default — added for sentinel-eval's cross-provider disagreement
+     * scoring, which needs to call the same transaction through two
+     * different providers and compare verdicts. When set, this bypasses
+     * the semantic vector cache entirely (no read, no write) and never
+     * falls back to the rule-based Tier 3 analyzer on failure: a second
+     * provider's call must never silently return the first provider's
+     * cached verdict (which would defeat the comparison), and a masked
+     * failure falling back to the same deterministic rule-based result for
+     * both providers would corrupt disagreement scoring by making them
+     * agree for the wrong reason. Callers that want this signal must
+     * handle the exception themselves.
+     *
      * @return array{source: string, is_threat: bool, message: string, elapsed_ms: float, risk_level: string, narrative: ?string, confidence: ?float, policy_refs: array}
      */
-    public function process(array $data, bool $observe = true): array
+    public function process(array $data, bool $observe = true, ?string $driverOverride = null): array
     {
         $startTime = microtime(true);
         $txnId = $data['id'] ?? uniqid('txn_');
@@ -48,6 +63,22 @@ class TransactionProcessorService
         $rawAmount = isset($data['amount']) ? (float) $data['amount'] : null;
         $amount = $rawAmount !== null ? number_format($rawAmount, 2) : '?';
         $currency = $data['currency'] ?? '';
+
+        if ($driverOverride !== null) {
+            $driver = $this->complianceManager->driver($driverOverride);
+            [$riskLevel, $isThreat, $narrative, $confidence, $policyRefs, $message] =
+                $this->gradeAiResult($driver->analyzeTransaction($data), $merchant);
+
+            if ($observe) {
+                if ($isThreat) {
+                    Cache::increment('sentinel_metrics_threat_count');
+                }
+                $this->recordMetric('driver_override', microtime(true) - $startTime);
+                $this->recordTransaction($txnId, $merchant, $amount, $currency, $isThreat, $message, 'driver_override', $rawAmount);
+            }
+
+            return $this->summary('driver_override', $isThreat, $message, $startTime, $riskLevel, $narrative, $confidence, $policyRefs);
+        }
 
         try {
             $fingerprint = $this->embedding->createTransactionFingerprint($data);
@@ -91,15 +122,8 @@ class TransactionProcessorService
             }
 
             // Cache miss — Tier 2: Gemini/OpenRouter analysis with policy RAG (ADR-0007)
-            $aiResult = $this->driver->analyzeTransaction($data);
-            $riskLevel = $aiResult['risk_level'] ?? 'unknown';
-            $isThreat = $riskLevel !== 'low';
-            $narrative = $aiResult['narrative'] ?: null;
-            $confidence = $aiResult['confidence'] ?? null;
-            $policyRefs = $aiResult['policy_refs'] ?? [];
-            $message = $narrative ?: ($isThreat
-                ? "Compliance risk detected at {$merchant} ({$riskLevel})"
-                : "Layer 7 Clear: {$merchant} - OK");
+            [$riskLevel, $isThreat, $narrative, $confidence, $policyRefs, $message] =
+                $this->gradeAiResult($this->driver->analyzeTransaction($data), $merchant);
 
             $this->vectorCache->upsertNamespace(
                 "txn_{$txnId}",
@@ -151,6 +175,28 @@ class TransactionProcessorService
         }
 
         return $this->summary($source, $isThreat, $message, $startTime, $riskLevel, $narrative, $confidence, $policyRefs);
+    }
+
+    /**
+     * Derives the grading tuple (risk_level, is_threat, narrative,
+     * confidence, policy_refs, message) from a raw ComplianceDriver
+     * result. Shared by the normal cache-miss path and the driver-override
+     * path — same grading rules regardless of which provider answered.
+     *
+     * @return array{0: string, 1: bool, 2: ?string, 3: ?float, 4: array, 5: string}
+     */
+    private function gradeAiResult(array $aiResult, string $merchant): array
+    {
+        $riskLevel = $aiResult['risk_level'] ?? 'unknown';
+        $isThreat = $riskLevel !== 'low';
+        $narrative = $aiResult['narrative'] ?: null;
+        $confidence = $aiResult['confidence'] ?? null;
+        $policyRefs = $aiResult['policy_refs'] ?? [];
+        $message = $narrative ?: ($isThreat
+            ? "Compliance risk detected at {$merchant} ({$riskLevel})"
+            : "Layer 7 Clear: {$merchant} - OK");
+
+        return [$riskLevel, $isThreat, $narrative, $confidence, $policyRefs, $message];
     }
 
     private function summary(

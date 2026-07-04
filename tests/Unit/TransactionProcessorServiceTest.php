@@ -2,6 +2,7 @@
 
 use App\Contracts\ComplianceDriver;
 use App\Models\Transaction;
+use App\Services\ComplianceManager;
 use App\Services\EmbeddingService;
 use App\Services\ThreatAnalysisService;
 use App\Services\ThreatResult;
@@ -32,8 +33,9 @@ function tps_processor(
     ThreatAnalysisService $a,
     VectorCacheService $vc,
     ?ComplianceDriver $d = null,
+    ?ComplianceManager $m = null,
 ): TransactionProcessorService {
-    return new TransactionProcessorService($e, $a, $vc, $d ?? tps_driverUnused());
+    return new TransactionProcessorService($e, $a, $vc, $d ?? tps_driverUnused(), $m ?? tps_managerUnused());
 }
 
 function tps_embeds(array $vector): EmbeddingService
@@ -50,6 +52,15 @@ function tps_embeddingFails(): EmbeddingService
     $m = Mockery::mock(EmbeddingService::class);
     $m->shouldReceive('createTransactionFingerprint')
         ->andThrow(new RuntimeException('Gemini quota exceeded'));
+
+    return $m;
+}
+
+function tps_embeddingUnused(): EmbeddingService
+{
+    $m = Mockery::mock(EmbeddingService::class);
+    $m->shouldNotReceive('createTransactionFingerprint');
+    $m->shouldNotReceive('embed');
 
     return $m;
 }
@@ -134,6 +145,35 @@ function tps_driverUnused(): ComplianceDriver
 {
     $m = Mockery::mock(ComplianceDriver::class);
     $m->shouldNotReceive('analyzeTransaction');
+
+    return $m;
+}
+
+function tps_managerUnused(): ComplianceManager
+{
+    $m = Mockery::mock(ComplianceManager::class);
+    $m->shouldNotReceive('driver');
+
+    return $m;
+}
+
+/**
+ * Mocks ComplianceManager::driver($name) to return a driver whose
+ * analyzeTransaction() returns $aiResult, and asserts it's resolved with
+ * the expected override name.
+ *
+ * @param  array{narrative: ?string, risk_level: string, policy_refs?: array, confidence?: float}  $aiResult
+ */
+function tps_managerResolving(string $expectedName, array $aiResult): ComplianceManager
+{
+    $driver = Mockery::mock(ComplianceDriver::class);
+    $driver->shouldReceive('analyzeTransaction')->andReturn(array_merge([
+        'policy_refs' => [],
+        'confidence' => 0.9,
+    ], $aiResult));
+
+    $m = Mockery::mock(ComplianceManager::class);
+    $m->shouldReceive('driver')->once()->with($expectedName)->andReturn($driver);
 
     return $m;
 }
@@ -661,5 +701,63 @@ it('auto-generates a txn_id when none is provided', function () use ($vector) {
     tps_processor(tps_embeds($vector), tps_analyzerUnused(), tps_cacheMiss(), $ai)->process($txn);
 
     expect(Transaction::first()->txn_id)->toStartWith('txn_');
+    Mockery::close();
+});
+
+// ─── Driver override (cross-provider disagreement scoring) ───────────────────
+
+it('resolves the requested driver by name and returns source "driver_override"', function () use ($baseTxn) {
+    tps_allowRedis();
+    $manager = tps_managerResolving('openrouter', ['narrative' => 'High value', 'risk_level' => 'high']);
+
+    $result = tps_processor(tps_embeddingUnused(), tps_analyzerUnused(), tps_cacheUnused(), null, $manager)
+        ->process($baseTxn, driverOverride: 'openrouter');
+
+    expect($result['source'])->toBe('driver_override')
+        ->and($result['risk_level'])->toBe('high')
+        ->and($result['is_threat'])->toBeTrue();
+
+    Mockery::close();
+});
+
+it('bypasses the vector cache entirely when a driver override is set', function () use ($baseTxn) {
+    tps_allowRedis();
+    $manager = tps_managerResolving('gemini', ['narrative' => 'Layer 7 Clear', 'risk_level' => 'low']);
+
+    // tps_cacheUnused()/tps_embeddingUnused() assert searchNamespace,
+    // upsertNamespace, createTransactionFingerprint, and embed are never
+    // called — the override path must not touch the cache at all.
+    $result = tps_processor(tps_embeddingUnused(), tps_analyzerUnused(), tps_cacheUnused(), null, $manager)
+        ->process($baseTxn, driverOverride: 'gemini');
+
+    expect($result['source'])->toBe('driver_override');
+    Mockery::close();
+});
+
+it('propagates the driver exception instead of falling back to Tier 3 on a driver override', function () use ($baseTxn) {
+    $driver = Mockery::mock(ComplianceDriver::class);
+    $driver->shouldReceive('analyzeTransaction')->andThrow(new RuntimeException('OpenRouter unavailable'));
+    $manager = Mockery::mock(ComplianceManager::class);
+    $manager->shouldReceive('driver')->once()->with('openrouter')->andReturn($driver);
+
+    $processor = tps_processor(tps_embeddingUnused(), tps_analyzerUnused(), tps_cacheUnused(), null, $manager);
+
+    expect(fn () => $processor->process($baseTxn, driverOverride: 'openrouter'))
+        ->toThrow(RuntimeException::class, 'OpenRouter unavailable');
+
+    Mockery::close();
+});
+
+it('records no metrics and no Transaction for a driver override when observe is false', function () use ($baseTxn) {
+    Redis::shouldReceive('executeRaw')->never();
+    $manager = tps_managerResolving('ollama', ['narrative' => 'Layer 7 Clear', 'risk_level' => 'low']);
+
+    $result = tps_processor(tps_embeddingUnused(), tps_analyzerUnused(), tps_cacheUnused(), null, $manager)
+        ->process($baseTxn, observe: false, driverOverride: 'ollama');
+
+    expect($result['source'])->toBe('driver_override')
+        ->and(Cache::get('sentinel_metrics_driver_override_count'))->toBeNull()
+        ->and(Transaction::count())->toBe(0);
+
     Mockery::close();
 });

@@ -48,10 +48,20 @@ it('returns a cache_hit result when the vector cache has a matching entry', func
 // ─── cache miss / threat path ─────────────────────────────────────────────────
 
 it('returns is_threat true for a high-value transaction on cache miss', function () use ($fakeVector) {
+    config(['sentinel.ai_driver' => 'ollama']);
+
     Http::fake([
         '*embedContent*' => Http::response(['embedding' => ['values' => $fakeVector]], 200),
         '*/query/transactions' => Http::response(['result' => []], 200),
         '*/upsert/transactions' => Http::response(['result' => 'Success'], 200),
+        '*/api/chat' => Http::response([
+            'message' => ['content' => json_encode([
+                'narrative' => 'High value transaction at Casino Royale requires AML review.',
+                'risk_level' => 'high',
+                'policy_refs' => ['AML-3.2'],
+                'confidence' => 0.9,
+            ])],
+        ], 200),
     ]);
 
     $response = SentinelServer::tool(AnalyzeTransaction::class, [
@@ -64,10 +74,20 @@ it('returns is_threat true for a high-value transaction on cache miss', function
 });
 
 it('returns is_threat false for a low-value transaction on cache miss', function () use ($fakeVector) {
+    config(['sentinel.ai_driver' => 'ollama']);
+
     Http::fake([
         '*embedContent*' => Http::response(['embedding' => ['values' => $fakeVector]], 200),
         '*/query/transactions' => Http::response(['result' => []], 200),
         '*/upsert/transactions' => Http::response(['result' => 'Success'], 200),
+        '*/api/chat' => Http::response([
+            'message' => ['content' => json_encode([
+                'narrative' => 'Routine low-value purchase, no compliance concern.',
+                'risk_level' => 'low',
+                'policy_refs' => [],
+                'confidence' => 0.95,
+            ])],
+        ], 200),
     ]);
 
     $response = SentinelServer::tool(AnalyzeTransaction::class, [
@@ -137,10 +157,20 @@ it('returns a validation error when amount is negative', function () {
 // ─── response shape ───────────────────────────────────────────────────────────
 
 it('response contains source, is_threat, message and elapsed_ms keys', function () use ($fakeVector) {
+    config(['sentinel.ai_driver' => 'ollama']);
+
     Http::fake([
         '*embedContent*' => Http::response(['embedding' => ['values' => $fakeVector]], 200),
         '*/query/transactions' => Http::response(['result' => []], 200),
         '*/upsert/transactions' => Http::response(['result' => 'Success'], 200),
+        '*/api/chat' => Http::response([
+            'message' => ['content' => json_encode([
+                'narrative' => 'Routine purchase, no compliance concern.',
+                'risk_level' => 'low',
+                'policy_refs' => [],
+                'confidence' => 0.9,
+            ])],
+        ], 200),
     ]);
 
     $response = SentinelServer::tool(AnalyzeTransaction::class, [
@@ -154,4 +184,47 @@ it('response contains source, is_threat, message and elapsed_ms keys', function 
         ->assertSee('is_threat')
         ->assertSee('message')
         ->assertSee('elapsed_ms');
+});
+
+// ─── driver override (cross-provider disagreement scoring) ───────────────────
+
+it('returns source driver_override and bypasses the transactions vector cache when driver is set', function () use ($fakeVector) {
+    config(['services.openrouter.api_key' => 'test-key']);
+
+    Http::fake([
+        '*embedContent*' => Http::response(['embedding' => ['values' => $fakeVector]], 200),
+        '*/query/policies' => Http::response(['result' => []], 200),
+        'https://openrouter.ai/*' => Http::response([
+            'choices' => [[
+                'message' => ['content' => json_encode([
+                    'narrative' => 'High value transaction at Casino Royale requires AML review.',
+                    'risk_level' => 'high',
+                    'policy_refs' => ['AML-3.2'],
+                    'confidence' => 0.85,
+                ])],
+            ]],
+        ], 200),
+    ]);
+
+    $response = SentinelServer::tool(AnalyzeTransaction::class, [
+        'amount' => 9000.00,
+        'currency' => 'USD',
+        'merchant' => 'Casino Royale',
+        'driver' => 'openrouter',
+    ]);
+
+    $response->assertOk()->assertSee('driver_override');
+    Http::assertNotSent(fn ($request) => str_contains($request->url(), '/query/transactions'));
+    Http::assertNotSent(fn ($request) => str_contains($request->url(), '/upsert/transactions'));
+});
+
+it('returns a validation error for an unknown driver name', function () {
+    $response = SentinelServer::tool(AnalyzeTransaction::class, [
+        'amount' => 50.00,
+        'currency' => 'USD',
+        'merchant' => 'Shell Gas',
+        'driver' => 'chatgpt',
+    ]);
+
+    $response->assertHasErrors();
 });
