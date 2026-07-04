@@ -448,10 +448,7 @@ No dashboard change is needed once a driver call succeeds — the queries are al
 
 ### 🐛 Known issues
 
-- [ ] **No rule-based fallback on LLM failure** (sentinel-l7):
-      `AxiomProcessorService` degrades to `risk_level: unknown` / `narrative:
-      null` on Gemini/OpenRouter failure — no Tier 3 verdict exists for this
-      pipeline, unlike the transaction pipeline's `ThreatAnalysisService`.
+None currently tracked.
 
 ### 📦 Production-Ready Baseline
 
@@ -484,6 +481,7 @@ No dashboard change is needed once a driver call succeeds — the queries are al
 * Idempotent Axiom persistence — `firstOrCreate` + partial unique index on `source_id` + `UniqueConstraintViolationException` catch; re-delivered stream messages never produce duplicate `compliance_events` rows
 * Early-exit idempotency in `AxiomProcessorService` — `EXISTS` check on `source_id` before AI routing; duplicate re-deliveries short-circuit before Gemini is called; DB-layer `firstOrCreate` remains as concurrent-race fallback
 * XCLAIM recovery for `synapse:axioms` consumer group — `XAUTOCLAIM` embedded in worker loop (ADR-0022)
+* Rule-based Tier 3 fallback for Axioms — `AxiomThreatAnalysisService` gives `AxiomProcessorService` an ADR-0007-style deterministic verdict (`risk_level: high`, threshold-referencing narrative) when Gemini/OpenRouter throws, instead of persisting `risk_level: unknown` / `narrative: null`; `driver_used` is stamped `fallback` so the degraded path is observable
 
 #### 💾 Persistence & Audit
 * `compliance_events` audit trail — Postgres persistence with `source_id` correlation

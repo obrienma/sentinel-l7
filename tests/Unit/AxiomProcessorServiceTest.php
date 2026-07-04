@@ -127,16 +127,19 @@ it('stores the audit narrative from the driver', function () use ($baseAxiom) {
 
 // ─── Resilience ───────────────────────────────────────────────────────────────
 
-it('persists the event with null narrative when the driver throws', function () use ($baseAxiom) {
+it('falls back to a rule-based verdict when the driver throws', function () use ($baseAxiom) {
     $driver = Mockery::mock(ComplianceDriver::class);
     $driver->shouldReceive('analyze')->andThrow(new \RuntimeException('Flash API timeout'));
 
-    (new AxiomProcessorService($driver))->process($baseAxiom);
+    $result = (new AxiomProcessorService($driver))->process($baseAxiom);
 
     $event = ComplianceEvent::first();
     expect($event)->not->toBeNull()
-        ->and($event->audit_narrative)->toBeNull()
-        ->and($event->routed_to_ai)->toBeTrue();
+        ->and($event->audit_narrative)->not->toBeNull()
+        ->and($event->audit_narrative)->toContain('Rule-based fallback')
+        ->and($event->driver_used)->toBe('fallback')
+        ->and($event->routed_to_ai)->toBeTrue()
+        ->and($result['risk_level'])->toBe('high');
 });
 
 it('logs an error when the driver throws', function () use ($baseAxiom) {

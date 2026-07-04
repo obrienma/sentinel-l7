@@ -17,6 +17,7 @@ class AxiomProcessorService
     public function __construct(
         private readonly ComplianceDriver $driver,
         private readonly TraceContextExtractor $extractor = new TraceContextExtractor(),
+        private readonly AxiomThreatAnalysisService $fallback = new AxiomThreatAnalysisService(),
         ?TracerProviderInterface $tracerProvider = null,
     ) {
         $this->tracer = ($tracerProvider ?? Globals::tracerProvider())
@@ -106,6 +107,7 @@ class AxiomProcessorService
             'policy_refs' => [],
             'confidence'  => 0.0,
         ];
+        $driverUsed = config('sentinel.ai_driver');
 
         $aiSpan  = $this->tracer->spanBuilder('axiom.ai_analysis')->startSpan();
         $aiScope = $aiSpan->activate();
@@ -125,6 +127,12 @@ class AxiomProcessorService
                 'source_id' => $sourceId,
                 'error'     => $e->getMessage(),
             ]);
+
+            // Tier 3 — rule-based fallback (ADR-0007 parity for the Axiom pipeline).
+            $fallback = $this->fallback->analyze($data);
+            $result['risk_level'] = $fallback['risk_level'];
+            $result['narrative'] = $fallback['narrative'];
+            $driverUsed = 'fallback';
         } finally {
             $aiSpan->end();
             $aiScope->detach();
@@ -138,7 +146,7 @@ class AxiomProcessorService
             'emitted_at'      => $data['emitted_at'] ?? null,
             'routed_to_ai'    => true,
             'audit_narrative' => $result['narrative'],
-            'driver_used'     => config('sentinel.ai_driver'),
+            'driver_used'     => $driverUsed,
         ]);
 
         return [
