@@ -31,7 +31,14 @@ class TransactionProcessorService
      * Set $observe = false to skip metrics and feed recording (e.g. MCP / ad-hoc queries).
      * The vector cache is always written regardless, as it benefits all callers.
      *
-     * @return array{source: string, is_threat: bool, message: string, elapsed_ms: float}
+     * risk_level/narrative/confidence/policy_refs are additive: they surface
+     * the full ComplianceDriver::analyzeTransaction() grading that this
+     * method previously collapsed into just a boolean is_threat. Existing
+     * callers (WatchTransactions, StreamTransactionsJob, ProcessStreamJob,
+     * AnalyzeTransaction MCP tool) only ever read source/is_threat/message/
+     * elapsed_ms and are unaffected.
+     *
+     * @return array{source: string, is_threat: bool, message: string, elapsed_ms: float, risk_level: string, narrative: ?string, confidence: ?float, policy_refs: array}
      */
     public function process(array $data, bool $observe = true): array
     {
@@ -66,6 +73,11 @@ class TransactionProcessorService
                 $analysis = $cached['metadata']['analysis'];
                 $isThreat = $analysis['isThreat'];
                 $message = $analysis['message'];
+                // ?? fallbacks handle vectors cached before these fields existed.
+                $riskLevel = $analysis['risk_level'] ?? ($isThreat ? 'high' : 'low');
+                $narrative = $analysis['narrative'] ?? $message;
+                $confidence = $analysis['confidence'] ?? null;
+                $policyRefs = $analysis['policy_refs'] ?? [];
 
                 if ($observe) {
                     if ($isThreat) {
@@ -75,14 +87,18 @@ class TransactionProcessorService
                     $this->recordTransaction($txnId, $merchant, $amount, $currency, $isThreat, $message, 'cache_hit', $rawAmount);
                 }
 
-                return $this->summary('cache_hit', $isThreat, $message, $startTime);
+                return $this->summary('cache_hit', $isThreat, $message, $startTime, $riskLevel, $narrative, $confidence, $policyRefs);
             }
 
             // Cache miss — Tier 2: Gemini/OpenRouter analysis with policy RAG (ADR-0007)
             $aiResult = $this->driver->analyzeTransaction($data);
-            $isThreat = ($aiResult['risk_level'] ?? 'unknown') !== 'low';
-            $message = $aiResult['narrative'] ?: ($isThreat
-                ? "Compliance risk detected at {$merchant} ({$aiResult['risk_level']})"
+            $riskLevel = $aiResult['risk_level'] ?? 'unknown';
+            $isThreat = $riskLevel !== 'low';
+            $narrative = $aiResult['narrative'] ?: null;
+            $confidence = $aiResult['confidence'] ?? null;
+            $policyRefs = $aiResult['policy_refs'] ?? [];
+            $message = $narrative ?: ($isThreat
+                ? "Compliance risk detected at {$merchant} ({$riskLevel})"
                 : "Layer 7 Clear: {$merchant} - OK");
 
             $this->vectorCache->upsertNamespace(
@@ -93,6 +109,10 @@ class TransactionProcessorService
                         'isThreat' => $isThreat,
                         'message' => $message,
                         'threat_level' => $isThreat ? 'high' : 'low',
+                        'risk_level' => $riskLevel,
+                        'narrative' => $narrative,
+                        'confidence' => $confidence,
+                        'policy_refs' => $policyRefs,
                     ],
                     'timestamp' => now()->toIso8601String(),
                     'threat_level' => $isThreat ? 'high' : 'low',
@@ -111,6 +131,12 @@ class TransactionProcessorService
             $result = $this->analyzer->analyze($data);
             $isThreat = $result->isThreat;
             $message = $result->message;
+            // Tier 3 is rule-based, not graded — mirror the same high/low
+            // convention used elsewhere so callers always get a risk_level.
+            $riskLevel = $isThreat ? 'high' : 'low';
+            $narrative = $message;
+            $confidence = null;
+            $policyRefs = [];
             if ($observe) {
                 $this->recordMetric('fallback', microtime(true) - $startTime);
             }
@@ -124,16 +150,28 @@ class TransactionProcessorService
             $this->recordTransaction($txnId, $merchant, $amount, $currency, $isThreat, $message, $source);
         }
 
-        return $this->summary($source, $isThreat, $message, $startTime);
+        return $this->summary($source, $isThreat, $message, $startTime, $riskLevel, $narrative, $confidence, $policyRefs);
     }
 
-    private function summary(string $source, bool $isThreat, string $message, float $startTime): array
-    {
+    private function summary(
+        string $source,
+        bool $isThreat,
+        string $message,
+        float $startTime,
+        string $riskLevel,
+        ?string $narrative,
+        ?float $confidence,
+        array $policyRefs,
+    ): array {
         return [
             'source' => $source,
             'is_threat' => $isThreat,
             'message' => $message,
             'elapsed_ms' => round((microtime(true) - $startTime) * 1000, 2),
+            'risk_level' => $riskLevel,
+            'narrative' => $narrative,
+            'confidence' => $confidence,
+            'policy_refs' => $policyRefs,
         ];
     }
 

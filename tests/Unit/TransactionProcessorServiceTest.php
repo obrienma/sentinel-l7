@@ -228,6 +228,85 @@ it('returns the correct shape, source, and outcome for every pipeline path', fun
     Mockery::close();
 })->with('source × outcome');
 
+// ─── Grading fields (risk_level, narrative, confidence, policy_refs) ──────────
+
+it('surfaces risk_level, narrative, confidence, and policy_refs on a cache miss', function () use ($baseTxn, $vector) {
+    tps_allowRedis();
+    $ai = tps_ai([
+        'narrative' => 'High value at ACME Corp ($500.00)',
+        'risk_level' => 'high',
+        'confidence' => 0.87,
+        'policy_refs' => ['AML-3.2'],
+    ]);
+    $result = tps_processor(tps_embeds($vector), tps_analyzerUnused(), tps_cacheMiss(), $ai)->process($baseTxn);
+
+    expect($result['risk_level'])->toBe('high')
+        ->and($result['narrative'])->toBe('High value at ACME Corp ($500.00)')
+        ->and($result['confidence'])->toBe(0.87)
+        ->and($result['policy_refs'])->toBe(['AML-3.2']);
+
+    Mockery::close();
+});
+
+it('derives risk_level/narrative/confidence/policy_refs defaults on the fallback path', function () use ($baseTxn) {
+    tps_allowRedis();
+    $result = tps_processor(
+        tps_embeddingFails(),
+        tps_analyzes(ThreatResult::threat('High value at ACME Corp ($500.00)', ['merchant' => 'ACME Corp', 'amount' => 500.00])),
+        tps_cacheUnused(),
+    )->process($baseTxn);
+
+    expect($result['risk_level'])->toBe('high')
+        ->and($result['narrative'])->toBe($result['message'])
+        ->and($result['confidence'])->toBeNull()
+        ->and($result['policy_refs'])->toBe([]);
+
+    Mockery::close();
+});
+
+it('falls back to derived risk_level/narrative when a cached vector predates these fields', function () use ($baseTxn, $vector) {
+    tps_allowRedis();
+    // tps_cacheHit() mocks a vector cached before this feature existed — its
+    // metadata.analysis has no risk_level/narrative/confidence/policy_refs.
+    $result = tps_processor(tps_embeds($vector), tps_analyzerUnused(), tps_cacheHit(true))->process($baseTxn);
+
+    expect($result['risk_level'])->toBe('high')
+        ->and($result['narrative'])->toBe($result['message'])
+        ->and($result['confidence'])->toBeNull()
+        ->and($result['policy_refs'])->toBe([]);
+
+    Mockery::close();
+});
+
+it('reads risk_level/narrative/confidence/policy_refs straight through on a cache hit that has them', function () use ($baseTxn, $vector) {
+    tps_allowRedis();
+    $cache = Mockery::mock(VectorCacheService::class);
+    $cache->shouldReceive('searchNamespace')->andReturn([[
+        'id' => 'txn_cached_graded',
+        'score' => 0.97,
+        'metadata' => [
+            'analysis' => [
+                'isThreat' => true,
+                'message' => 'Cached: threat detected',
+                'risk_level' => 'critical',
+                'narrative' => 'Cached narrative text',
+                'confidence' => 0.95,
+                'policy_refs' => ['GDPR-5.1'],
+            ],
+        ],
+    ]]);
+    $cache->shouldNotReceive('upsertNamespace');
+
+    $result = tps_processor(tps_embeds($vector), tps_analyzerUnused(), $cache)->process($baseTxn);
+
+    expect($result['risk_level'])->toBe('critical')
+        ->and($result['narrative'])->toBe('Cached narrative text')
+        ->and($result['confidence'])->toBe(0.95)
+        ->and($result['policy_refs'])->toBe(['GDPR-5.1']);
+
+    Mockery::close();
+});
+
 // ─── Metric counters ──────────────────────────────────────────────────────────
 
 it('increments sentinel_metrics_cache_hit_count on a cache hit', function () use ($baseTxn, $vector) {
