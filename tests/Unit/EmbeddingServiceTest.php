@@ -68,7 +68,8 @@ it('pipe-delimits the fingerprint fields', function () {
         'currency' => 'USD',
     ]);
 
-    expect(substr_count($fingerprint, ' | '))->toBe(4);
+    // 6 fields (Amount, Type, Category, Merchant, Time, Message) → 5 delimiters.
+    expect(substr_count($fingerprint, ' | '))->toBe(5);
 });
 
 it('produces identical fingerprints for identical inputs', function () {

@@ -28,19 +28,33 @@ it('only yields merchants and currencies from config', function () {
     $service = new TransactionStreamService();
     $generator = $service->generate();
 
-    $transaction = $generator->current();
+    $profiles = collect(config('sentinel.simulation.merchants'))->keyBy('name');
+    $merchantNames = $profiles->keys()->all();
 
-    expect($transaction['merchant'])->toBeIn(config('sentinel.simulation.merchants'));
-    expect($transaction['currency'])->toBeIn(config('sentinel.simulation.currencies'));
+    foreach (range(1, 20) as $i) {
+        $transaction = $generator->current();
+
+        expect($transaction['merchant'])->toBeIn($merchantNames)
+            ->and($transaction['currency'])->toBeIn($profiles[$transaction['merchant']]['currencies']);
+
+        $generator->next();
+    }
 });
 
-it('generates amounts within the expected range', function () {
+it('generates amounts within the expected range for the sampled merchant', function () {
     $service = new TransactionStreamService();
     $generator = $service->generate();
 
+    $profiles = collect(config('sentinel.simulation.merchants'))->keyBy('name');
+
     foreach (range(1, 20) as $i) {
-        $amount = $generator->current()['amount'];
-        expect($amount)->toBeGreaterThanOrEqual(1.00)->toBeLessThanOrEqual(500.00);
+        $transaction = $generator->current();
+        $profile = $profiles[$transaction['merchant']];
+
+        expect($transaction['amount'])
+            ->toBeGreaterThanOrEqual($profile['amount_min'] / 100)
+            ->toBeLessThanOrEqual($profile['amount_max'] / 100);
+
         $generator->next();
     }
 });

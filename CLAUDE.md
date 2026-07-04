@@ -134,7 +134,7 @@ These are separate from Redis Streams — plain key/value `SET`/`GET`, not strea
 - Never hit real external APIs in tests — mock at the service interface boundary.
 - Architecture tests live in `tests/ArchTest.php`; run them after any change to `App\Services\Sentinel\Logic` with `./vendor/bin/pest tests/ArchTest.php`.
 - No frontend tests yet; Vitest + React Testing Library is the intended approach when added.
-- Pre-existing known failures: `WatchTransactionsTest` mock (`mockStreamWithOneMessage` must return `{messages, cursor}` shape) and one `EmbeddingServiceTest`. Don't fix unrelated to current task.
+- Full suite is green (`WatchTransactionsTest`'s mock shape and the fingerprint/merchant-config staleness in `EmbeddingServiceTest`/`TransactionStreamServiceTest` are fixed). `tests/ArchTest.php` run in isolation can still fail on an order-dependent `TraceContextExtractor` gap — passes when run as part of the full suite.
 
 ## Prompts
 
