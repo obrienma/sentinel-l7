@@ -32,3 +32,24 @@ it('throws when ai_driver names an unregistered driver', function () {
     expect(fn () => app(ComplianceManager::class)->driver())
         ->toThrow(\InvalidArgumentException::class);
 });
+
+it('defaults to ollama when SENTINEL_AI_DRIVER is unset (ADR-0027)', function () {
+    // The already-booted config() repository has env('SENTINEL_AI_DRIVER', ...)
+    // baked in from whatever this environment's real .env sets — re-`require`
+    // the config file with the env var cleared to test the literal fallback.
+    $original = getenv('SENTINEL_AI_DRIVER');
+
+    putenv('SENTINEL_AI_DRIVER');
+    unset($_ENV['SENTINEL_AI_DRIVER'], $_SERVER['SENTINEL_AI_DRIVER']);
+
+    try {
+        $config = require config_path('sentinel.php');
+        expect($config['ai_driver'])->toBe('ollama');
+    } finally {
+        if ($original !== false) {
+            putenv("SENTINEL_AI_DRIVER={$original}");
+            $_ENV['SENTINEL_AI_DRIVER'] = $original;
+            $_SERVER['SENTINEL_AI_DRIVER'] = $original;
+        }
+    }
+});

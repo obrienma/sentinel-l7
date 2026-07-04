@@ -31,8 +31,8 @@ UPSTASH_VECTOR_REST_TOKEN=...
 # Gemini AI
 GEMINI_API_KEY=...
 
-# Active AI driver: gemini | openrouter
-SENTINEL_AI_DRIVER=gemini
+# Active AI driver: gemini | openrouter | ollama (ollama is the default, see ADR-0027)
+SENTINEL_AI_DRIVER=ollama
 
 # Optional — override the default 0.90 similarity threshold
 # UPSTASH_VECTOR_THRESHOLD=0.90

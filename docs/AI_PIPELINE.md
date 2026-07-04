@@ -50,10 +50,10 @@ When updating a prompt, create a new version file. The latest version is used au
 The active driver is set via env var:
 
 ```env
-SENTINEL_AI_DRIVER=gemini      # or: openrouter
+SENTINEL_AI_DRIVER=ollama      # default (ADR-0027); or: gemini, openrouter
 ```
 
-Both drivers implement `ComplianceDriver::analyze(array $data): array`. The `ComplianceManager` (Service Manager pattern) resolves the correct driver at runtime. No code change required to switch backends.
+All three drivers extend `AbstractComplianceDriver` and implement `callModel(string $prompt): string`; prompt building, policy RAG, quality scoring, and response parsing are shared. The `ComplianceManager` (Service Manager pattern) resolves the correct driver at runtime. No code change required to switch backends.
 
 ## Gemini Response Format
 
@@ -70,6 +70,10 @@ The analysis prompt requests structured JSON output:
 ```
 
 `responseMimeType: "application/json"` is set in the request. Gemini occasionally still wraps output in markdown fences — strip defensively before parsing.
+
+## Ollama Notes (ADR-0027)
+
+`OllamaDriver` posts to `/api/chat` with `"format": "json"` (syntax only, not schema — same fence-stripping fallback as Gemini applies), `"stream": false` (required — the endpoint streams NDJSON by default otherwise), and `"think": false`. The default model (`qwen3.5:9b-q4_K_M`, `32qwen3.5:latest` tag) is a hybrid reasoning model that emits a verbose `message.thinking` trace before answering unless `think` is explicitly disabled — a live test showed ~20x higher latency with thinking left on, for no difference in the final `message.content`.
 
 ## Token Cost Control
 

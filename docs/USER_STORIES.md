@@ -107,7 +107,7 @@ Stories are organised by domain. Each story is marked:
 ### ✅ 🛠️ Swap AI backends without code changes
 > As a platform engineer, I want to change the AI provider via an environment variable, so that I can respond to quota exhaustion or cost changes without a deployment.
 
-*Delivered by:* `ComplianceManager` (Laravel Service Manager); `SENTINEL_AI_DRIVER=gemini|openrouter`
+*Delivered by:* `ComplianceManager` (Laravel Service Manager); `SENTINEL_AI_DRIVER=ollama|gemini|openrouter` (ollama is the default, see ADR-0027)
 
 ---
 

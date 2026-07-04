@@ -1,6 +1,6 @@
 # RAG Pipeline
 
-> **Status: Live.** Policy ingestion (`sentinel:ingest`) and retrieval (`GeminiDriver`) are both implemented and wired end-to-end.
+> **Status: Live.** Policy ingestion (`sentinel:ingest`) and retrieval (`AbstractComplianceDriver`, shared by `OllamaDriver`/`GeminiDriver`/`OpenRouterDriver` — ADR-0027) are both implemented and wired end-to-end.
 
 ## What is RAG Here?
 
@@ -17,7 +17,7 @@ flowchart TD
     end
 
     subgraph Runtime["Axiom Processing (sentinel:watch-axioms)"]
-        AX[Incoming Axiom\nanomaly_score > 0.8] --> Query["GeminiDriver::buildQueryText\ntranslate score → severity phrase"]
+        AX[Incoming Axiom\nanomaly_score > 0.8] --> Query["AbstractComplianceDriver::buildQueryText\ntranslate score → severity phrase"]
         Query --> Embed2["EmbeddingService::embed\ncomply question → vector"]
         Embed2 --> PolicySearch["VectorCacheService::searchNamespace\nns:policies / ≥ 0.70 / top 3"]
 
@@ -25,8 +25,8 @@ flowchart TD
         PolicySearch -->|empty| NoCtx["No context —\nproceed without RAG"]
 
         PolicyCtx & NoCtx --> Prompt["buildPrompt\nAxiom + policy chunks"]
-        Prompt --> Gemini["Gemini Flash\nstructured JSON"]
-        Gemini --> Result["{narrative, risk_level,\npolicy_refs, confidence}"]
+        Prompt --> Model["Active ComplianceDriver\n(Ollama default / Gemini / OpenRouter)\nformat: json"]
+        Model --> Result["{narrative, risk_level,\npolicy_refs, confidence}"]
         Result --> Persist["ComplianceEvent\nPostgres"]
     end
 
@@ -47,7 +47,7 @@ The lower policy threshold is intentional: a compliance question and the policy 
 
 ## Query Formulation
 
-`GeminiDriver::buildQueryText()` translates raw Axiom fields into a compliance-vocabulary question:
+`AbstractComplianceDriver::buildQueryText()` translates raw Axiom fields into a compliance-vocabulary question:
 
 | anomaly_score | Generated query phrase |
 |---|---|

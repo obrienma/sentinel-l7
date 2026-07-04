@@ -94,7 +94,7 @@ flowchart LR
 
 **⚡ AI & Vector**
 
-- **Gemini Flash + OpenRouter:** LLM analysis runs through a swappable `ComplianceDriver` interface backed by a Laravel Service Manager; switching providers is a single env-var change, not a code change.
+- **Ollama (default) + Gemini Flash + OpenRouter:** LLM analysis runs through a swappable `ComplianceDriver` interface backed by a Laravel Service Manager; switching providers is a single env-var change, not a code change. Default is local/self-hosted `qwen3.5:9b-q4_K_M` via Ollama (ADR-0027) — no external API quota on the compliance-analysis path.
 - **Upstash Vector:** Named-namespace strategy (ADR-0026) — `transactions` (semantic cache, ≥ 0.95 threshold) cuts repeat LLM calls by 80%+; `policies` (RAG corpus, ≥ 0.70, domain-filtered) grounds compliance rulings in indexed regulatory documents (AML, HIPAA, GDPR). No data lives in Upstash's implicit default namespace.
 
 **👁️ Frontend & Observability**
@@ -230,7 +230,7 @@ The system is composed of three long-running processes plus a shared intelligenc
 * **Service Manager driver abstraction** — `ComplianceManager` extends Laravel's `Manager`; swap AI providers via `SENTINEL_AI_DRIVER` env var, no code change required
 * **Arch-test-enforced domain isolation** — Pest architecture tests assert `App\Services\Sentinel\Logic` cannot import `Http` or `Redis` facades; enforced in `tests/ArchTest.php`
 * **Policy epoch invalidation** — cached compliance verdicts carry an MD5 of the policy corpus; mismatched epochs on cache hits trigger re-analysis so no verdict survives a policy update unexamined
-* **Prompt versioning** — all LLM templates live in `prompts/` as versioned Markdown with changelogs and `Used by:` lists; `GeminiDriver` loads the compiled `.txt` form at runtime; prompt drift is visible in git like code drift
+* **Prompt versioning** — all LLM templates live in `prompts/` as versioned Markdown with changelogs and `Used by:` lists; the active `ComplianceDriver` loads the compiled `.txt` form at runtime; prompt drift is visible in git like code drift
 * **Named rate limiters** — `RateLimiter::for()` limiters on login, signup, and `/dashboard/stream`; all thresholds backed by `RATE_LIMIT_*` env vars via `config/sentinel.php`
 
 ### Processing Loop
@@ -327,19 +327,32 @@ classDiagram
     class ComplianceDriver {
         <<interface>>
         +analyze(array data) array
+        +analyzeTransaction(array data) array
+    }
+
+    class AbstractComplianceDriver {
+        <<abstract>>
+        #callModel(string prompt) string
+        +analyze(array data) array
+        +analyzeTransaction(array data) array
+    }
+
+    class OllamaDriver {
+        #callModel(string prompt) string
     }
 
     class GeminiDriver {
-        +analyze(array data) array
+        #callModel(string prompt) string
     }
 
     class OpenRouterDriver {
-        +analyze(array data) array
+        #callModel(string prompt) string
     }
 
     class ComplianceManager {
         -Application app
         +driver(string name) ComplianceDriver
+        #createOllamaDriver() ComplianceDriver
         #createGeminiDriver() ComplianceDriver
         #createOpenrouterDriver() ComplianceDriver
         +getDefaultDriver() string
@@ -351,8 +364,10 @@ classDiagram
         +process(array transaction) array
     }
 
-    ComplianceDriver <|.. GeminiDriver : Realizes
-    ComplianceDriver <|.. OpenRouterDriver : Realizes
+    ComplianceDriver <|.. AbstractComplianceDriver : Realizes
+    AbstractComplianceDriver <|-- OllamaDriver : Extends
+    AbstractComplianceDriver <|-- GeminiDriver : Extends
+    AbstractComplianceDriver <|-- OpenRouterDriver : Extends
     ComplianceManager ..> ComplianceDriver : Resolves
     ComplianceEngine o-- ComplianceDriver : Injected
 ```
@@ -404,7 +419,7 @@ The Axiom Worker emits one `axiom.process` span per message — decorated with `
 The dashboard's **AI Analysis by Driver** and **AI Confidence** panels read `ai.driver` / `ai.confidence` attributes, which `AxiomProcessorService::routeToAi()` only sets when `ComplianceDriver::analyze()` succeeds. With a placeholder API key the call throws — the failure surfaces in the **AI Errors** panel and the two AI panels stay empty. To populate them:
 
 1. Set a working credential for the active `SENTINEL_AI_DRIVER`:
-   `openrouter` → `OPENROUTER_API_KEY` (+ `OPENROUTER_MODEL`); `gemini` → `GEMINI_API_KEY` (+ `GEMINI_FLASH_URL`).
+   `ollama` (default) → reachable `OLLAMA_URL` + pulled `OLLAMA_CHAT_MODEL`, no API key; `openrouter` → `OPENROUTER_API_KEY` (+ `OPENROUTER_MODEL`); `gemini` → `GEMINI_API_KEY` (+ `GEMINI_FLASH_URL`).
 2. Send Axioms with `anomaly_score > AXIOM_AUDIT_THRESHOLD` (default `0.8`) so they route to AI — sub-threshold Axioms never emit `axiom.ai_analysis` attributes.
 3. Run `php artisan sentinel:watch-axioms` with the OTel exporter pointed at the collector.
 
@@ -466,7 +481,8 @@ None currently tracked.
 * Benchmark seeder — `database/seeders/TransactionSeeder.php` runs N simulated transactions through the live pipeline and reports cache hit rate, fallbacks, embedding API call count, and threat rate
 
 #### 🧠 AI Compliance Engine
-* ComplianceDriver stack — `GeminiDriver` (Gemini Flash + policy RAG), `OpenRouterDriver` (OpenAI-compatible, swap via env), `ComplianceManager` (Laravel Service Manager pattern)
+* ComplianceDriver stack — `OllamaDriver` (`qwen3.5:9b-q4_K_M`, default — ADR-0027), `GeminiDriver` (Gemini Flash), `OpenRouterDriver` (OpenAI-compatible), all sharing policy RAG/quality-scoring/response-parsing via `AbstractComplianceDriver`; swap via env, `ComplianceManager` (Laravel Service Manager pattern)
+* Ollama as default compliance-analysis driver (ADR-0027) — `SENTINEL_AI_DRIVER` defaults to `ollama`; verified live against the real host (raw JSON-mode call, and a full `TransactionProcessorService` cache-miss call producing a correctly-flagged critical-risk verdict with real policy citations). `think: false` avoids a ~20x latency penalty from `qwen3.5`'s reasoning trace; Gemini/OpenRouter remain available via env override, no removal
 * Policy RAG — `sentinel:ingest` chunking pipeline, `policies/` corpus, score-aware query formulation
 * Domain-scoped RAG retrieval — `domain` metadata tag at ingest; server-side filter at query time; retrieval quality logging
 * Output quality scoring — 4-signal rubric on every compliance driver response; `low quality score` warning when score ≤ 1

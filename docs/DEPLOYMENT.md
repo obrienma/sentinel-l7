@@ -31,7 +31,8 @@ GEMINI_API_KEY=...
 GEMINI_MODEL=gemini-2.0-flash
 GEMINI_EMBEDDING_MODEL=gemini-embedding-001
 
-SENTINEL_AI_DRIVER=gemini
+SENTINEL_AI_DRIVER=gemini  # default is ollama (ADR-0027) — override to gemini/openrouter here if the
+                           # deploy target can't reach the Tailscale Ollama host used in dev
 ```
 
 ## Deploy

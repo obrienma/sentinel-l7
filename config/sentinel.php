@@ -12,7 +12,7 @@ return [
         'high_risk' => 400.00,
     ],
 
-    'ai_driver' => env('SENTINEL_AI_DRIVER', 'gemini'),
+    'ai_driver' => env('SENTINEL_AI_DRIVER', 'ollama'),
     'embedding_driver' => env('SENTINEL_EMBEDDING_DRIVER', 'gemini'),
     'axiom_threshold' => env('AXIOM_AUDIT_THRESHOLD', 0.8),
 

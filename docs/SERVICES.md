@@ -106,7 +106,7 @@ services.upstash_vector.similarity_threshold → UPSTASH_VECTOR_THRESHOLD (defau
 
 ### `searchNamespace(array $embedding, string $namespace, float $threshold, int $topK = 3): array`
 
-Queries a specific Upstash namespace with an explicit threshold. Returns all results above the threshold (not just the best match), each as `{id, score, metadata}`. Used by `GeminiDriver` and the `SearchPolicies` MCP tool to query `ns:policies`.
+Queries a specific Upstash namespace with an explicit threshold. Returns all results above the threshold (not just the best match), each as `{id, score, metadata}`. Used by all three `ComplianceDriver` implementations (via `AbstractComplianceDriver::fetchPolicyContext()`) and the `SearchPolicies` MCP tool to query `ns:policies`.
 
 ```php
 $chunks = $vectorCache->searchNamespace($vector, 'policies', 0.70, 3);
@@ -149,34 +149,60 @@ $result = $driver->analyze($axiomData);
 
 **Config key read:**
 ```
-sentinel.ai_driver → SENTINEL_AI_DRIVER (default: gemini)
+sentinel.ai_driver → SENTINEL_AI_DRIVER (default: ollama, see ADR-0027)
 ```
 
-**Registered drivers:** `gemini` → `GeminiDriver`, `openrouter` → `OpenRouterDriver`
+**Registered drivers:** `ollama` → `OllamaDriver` (default), `gemini` → `GeminiDriver`, `openrouter` → `OpenRouterDriver`
+
+---
+
+## AbstractComplianceDriver
+
+**File:** `app/Services/Compliance/AbstractComplianceDriver.php`  
+**Implements:** `App\Contracts\ComplianceDriver` (abstract)
+
+Shared base for all three `ComplianceDriver` implementations (ADR-0027). Owns everything except the actual outbound HTTP call:
+
+```
+buildQueryText(data) / buildTransactionQueryText(data)   // translate Axiom/transaction fields → compliance question
+  → EmbeddingService::embed(query)                       // embed the question
+  → VectorCacheService::searchNamespace('policies', 0.70, 3)  // retrieve policy chunks
+  → buildPrompt(data, chunks) / buildTransactionPrompt(...)   // inject data + policy context into prompt
+  → callModel(prompt)                                    // ABSTRACT — each subclass's own HTTP call
+  → parseResponse(raw)                                    // strip markdown fences, decode JSON
+  → logResponseQuality(result, data)                      // 4-signal quality score, low-quality warning
+```
+
+Returns `{narrative, risk_level, policy_refs, confidence}`. Log messages (`'... policy RAG retrieval'`, `'... response quality'`, etc.) are prefixed with `class_basename(static::class)`, so each driver's logs stay distinguishable despite the shared implementation.
+
+**Query formulation:** `buildQueryText()` translates `anomaly_score` to a severity phrase so the embedding lands in the same semantic space as policy text about reporting obligations. Score ≥0.90 → `"critical severity requiring immediate escalation and reporting"`, etc.
+
+**Resilience:** If policy RAG fails (embedding or vector search throws), `fetchPolicyContext()` catches the exception, logs a warning, and proceeds with an empty context. `callModel()` still runs — it just has no retrieved policy chunks.
+
+---
+
+## OllamaDriver
+
+**File:** `app/Services/Compliance/OllamaDriver.php`  
+**Extends:** `AbstractComplianceDriver` · **Default driver (ADR-0027)**
+
+`callModel()` posts to `POST {OLLAMA_URL}/api/chat` with `format: "json"`, `stream: false` (mandatory — the endpoint streams NDJSON by default), and `think: false` (the default model, `qwen3.5:9b-q4_K_M`, is a hybrid reasoning model — without this it emits a verbose `message.thinking` trace before answering, ~20x slower for no difference in `message.content`). Response path: `message.content`.
+
+**Config keys read:**
+```
+services.ollama.url          → OLLAMA_URL
+services.ollama.chat_model   → OLLAMA_CHAT_MODEL (default: 32qwen3.5:latest — 32k-context tag)
+services.ollama.chat_timeout → OLLAMA_CHAT_TIMEOUT (default: 60)
+```
 
 ---
 
 ## GeminiDriver
 
 **File:** `app/Services/Compliance/GeminiDriver.php`  
-**Implements:** `App\Contracts\ComplianceDriver`
+**Extends:** `AbstractComplianceDriver`
 
-Runs the full RAG + AI analysis pipeline for a single Axiom:
-
-```
-buildQueryText(data)                   // translate anomaly fields → compliance question
-  → EmbeddingService::embed(query)     // embed the question
-  → VectorCacheService::searchNamespace('policies', 0.70, 3)  // retrieve policy chunks
-  → buildPrompt(data, chunks)          // inject Axiom + policy context into prompt
-  → Gemini Flash (structured JSON)     // generate audit narrative
-  → parseResponse(raw)                 // strip markdown fences, decode JSON
-```
-
-Returns `{narrative, risk_level, policy_refs, confidence}`.
-
-**Query formulation:** `buildQueryText()` translates `anomaly_score` to a severity phrase so the embedding lands in the same semantic space as policy text about reporting obligations. Score ≥0.90 → `"critical severity requiring immediate escalation and reporting"`, etc.
-
-**Resilience:** If policy RAG fails (embedding or vector search throws), `fetchPolicyContext()` catches the exception, logs a warning, and proceeds with an empty context. The Gemini call still runs — it just has no retrieved policy chunks.
+`callModel()` posts to Gemini Flash with `responseMimeType: "application/json"` set on the request. Gemini occasionally still wraps output in markdown fences — `parseResponse()` (inherited) strips them defensively.
 
 **Config keys read:**
 ```

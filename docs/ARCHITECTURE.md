@@ -80,7 +80,9 @@ Sentinel-L7 is a multi-process Laravel application. Three processes run concurre
 |---------|---------------|---------------------|
 | `ComplianceEngine` | Orchestrates analysis pipeline | `ComplianceDriver` |
 | `ComplianceManager` | Resolves AI driver (Service Manager pattern) | Config |
-| `GeminiDriver` | Gemini Flash analysis + policy RAG | Gemini API |
+| `AbstractComplianceDriver` | Shared prompt building, policy RAG, quality scoring, response parsing | — |
+| `OllamaDriver` | Default AI backend (qwen3.5, ADR-0027) — analysis + policy RAG | Ollama API |
+| `GeminiDriver` | Alternative AI backend — Gemini Flash analysis + policy RAG | Gemini API |
 | `OpenRouterDriver` | Alternative AI backend | OpenRouter API |
 | `EmbeddingService` | Semantic fingerprints + embeddings | Gemini Embedding API |
 | `VectorCacheService` | Similarity search + cache storage | Upstash Vector |
@@ -118,7 +120,7 @@ interface ComplianceDriver {
 }
 ```
 
-`ComplianceManager` extends Laravel's `Manager` class. The active driver is resolved from `config('sentinel.ai_driver')`. Switching from Gemini to OpenRouter requires only an env var change — no code changes.
+`ComplianceManager` extends Laravel's `Manager` class. The active driver is resolved from `config('sentinel.ai_driver')` (`ollama` | `gemini` | `openrouter`, default `ollama` per ADR-0027). Switching drivers requires only an env var change — no code changes.
 
 ## Dual-Namespace Vector Strategy
 

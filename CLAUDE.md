@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **Backend:** PHP 8.4, Laravel 12
 - **Frontend:** React 19, Inertia.js, shadcn/ui (New York style, slate base), Tailwind CSS v4
-- **AI:** Gemini Flash (compliance analysis), Gemini `embedding-001` (1536-dim vectors)
+- **AI:** Ollama `qwen3.5:9b-q4_K_M` (compliance analysis, default — ADR-0027; Gemini Flash/OpenRouter available via `SENTINEL_AI_DRIVER`), Ollama `nomic-embed-text` (embeddings, default — ADR-0025; 768-dim vectors)
 - **Infrastructure:** Upstash Redis Streams + Upstash Vector, Neon PostgreSQL
 - **Deployment:** Railway
 
@@ -40,7 +40,7 @@ Both workers run an `XAUTOCLAIM` pass at the top of every loop iteration — rec
 1. Embed transaction fingerprint → active `EmbeddingDriver` (Gemini `embedding-001`, 1536-dim, or Ollama `nomic-embed-text`, 768-dim; swap via `SENTINEL_EMBEDDING_DRIVER`, see ADR-0025)
 2. Vector search (Upstash, ns:`transactions`, threshold ≥ 0.95) → cache hit returns early. No implicit/default namespace is used anywhere (ADR-0026).
 3. Cache hit is validated against `sentinel_policy_epoch` — stale epoch triggers re-analysis
-4. Cache miss → Gemini Flash analysis with policy RAG (ns:`policies`, threshold ≥ 0.70, filtered by `domain` metadata when present)
+4. Cache miss → active `ComplianceDriver` analysis with policy RAG (ns:`policies`, threshold ≥ 0.70, filtered by `domain` metadata when present) — Ollama `qwen3.5` by default, or Gemini Flash/OpenRouter via `SENTINEL_AI_DRIVER` (see ADR-0027)
 5. Upsert result into vector cache (ns:`transactions`) → XACK
 
 Tier 3 fallback: if embedding or vector search throws, `ThreatAnalysisService` runs locally (amount threshold, no AI). XACK always called.
@@ -63,13 +63,14 @@ Tier 3 fallback: if embedding or vector search throws, `ThreatAnalysisService` r
 
 | File | Purpose |
 |------|---------|
-| `app/Services/EmbeddingService.php` | Fingerprint creation + Gemini embedding calls |
+| `app/Services/EmbeddingService.php` | Fingerprint creation + embedding calls (delegates to active `EmbeddingDriver`) |
 | `app/Services/VectorCacheService.php` | Upstash Vector search/upsert/delete |
 | `app/Services/TransactionProcessorService.php` | Core pipeline — cache hit/miss/fallback logic |
 | `app/Services/ThreatAnalysisService.php` | Tier 3 rule-based fallback |
 | `app/Services/AxiomProcessorService.php` | Axiom pipeline — threshold routing + ComplianceEvent persistence |
 | `app/Services/AxiomStreamService.php` | XREADGROUP/XAUTOCLAIM wrapper for `synapse:axioms` |
-| `app/Services/ComplianceManager.php` | Laravel Service Manager — resolves `gemini` or `openrouter` driver |
+| `app/Services/ComplianceManager.php` | Laravel Service Manager — resolves `ollama` (default), `gemini`, or `openrouter` driver |
+| `app/Services/Compliance/AbstractComplianceDriver.php` | Shared prompt building, policy RAG, quality scoring, response parsing (ADR-0027) |
 | `app/Contracts/ComplianceDriver.php` | Driver interface: `analyze(array $data): array` |
 | `app/Providers/AppServiceProvider.php` | Binds `ComplianceDriver` → `ComplianceManager::driver()` |
 | `app/Console/Commands/` | Artisan commands (stream, watch, watch-axioms, ingest, reset-metrics) |
@@ -84,10 +85,11 @@ Tier 3 fallback: if embedding or vector search throws, `ThreatAnalysisService` r
 
 ## DI Wiring
 
-`AppServiceProvider` binds `ComplianceDriver::class` to the result of `ComplianceManager::driver()`, which reads `SENTINEL_AI_DRIVER` from env. Both `GeminiDriver` and `OpenRouterDriver` implement `ComplianceDriver`. Switch drivers without code changes:
+`AppServiceProvider` binds `ComplianceDriver::class` to the result of `ComplianceManager::driver()`, which reads `SENTINEL_AI_DRIVER` from env. `OllamaDriver`, `GeminiDriver`, and `OpenRouterDriver` all extend `AbstractComplianceDriver` and implement `ComplianceDriver`. Switch drivers without code changes:
 
 ```env
-SENTINEL_AI_DRIVER=gemini      # default
+SENTINEL_AI_DRIVER=ollama      # default (ADR-0027)
+SENTINEL_AI_DRIVER=gemini      # alternative
 SENTINEL_AI_DRIVER=openrouter  # alternative
 ```
 
@@ -136,7 +138,7 @@ These are separate from Redis Streams — plain key/value `SET`/`GET`, not strea
 
 ## Prompts
 
-All LLM prompt templates must live in `prompts/` as versioned Markdown files (`.md`). The runtime template (`compliance-audit-narrative.txt`) is the rendered form loaded by `GeminiDriver` — both `.md` (source) and `.txt` (runtime) exist for that prompt. When a prompt is created or changed:
+All LLM prompt templates must live in `prompts/` as versioned Markdown files (`.md`). The runtime template (`compliance-audit-narrative.txt`) is the rendered form loaded by the active `ComplianceDriver` implementation (`AbstractComplianceDriver::buildPrompt()`) — both `.md` (source) and `.txt` (runtime) exist for that prompt. When a prompt is created or changed:
 
 - Create or update the file in `prompts/` (e.g. `prompts/my-prompt.md`)
 - Increment the `**Version:**` field and add a changelog entry
@@ -146,18 +148,19 @@ Never hardcode a prompt only inside a service class without a corresponding `pro
 
 ## ADR files
 
-Create decision logs according to https://martinfowler.com/bliki/ArchitectureDecisionRecord.html. Current ADRs live in `docs/adr/` (0001–0022).
+Create decision logs according to https://martinfowler.com/bliki/ArchitectureDecisionRecord.html. Current ADRs live in `docs/adr/` (0001–0027).
 
 ## TODO
 
 - **Multi-tenancy** — tenant-scoped middleware on `routes/web.php` auth group + tenant-prefixed stream keys; placeholder comment exists in routes file
 - **Compliance report export** — CSV/PDF export endpoint for flagged `compliance_events` by date range
 - **EventHorizon deep-link** — cross-system lookup from `compliance_events.source_id` back to the originating EventHorizon event
-- **Silent partial failure alerting** — connect `GeminiDriver`/`OpenRouterDriver` quality score and retrieval coverage logs to an operational alert (e.g. `quality_score=0` for N consecutive events, or zero-chunk filtered retrieval persists)
+- **Silent partial failure alerting** — connect `ComplianceDriver` quality score and retrieval coverage logs to an operational alert (e.g. `quality_score=0` for N consecutive events, or zero-chunk filtered retrieval persists)
 - **Retrieval coverage monitoring** — log mean similarity score per domain per query; declining scores signal knowledge base drift
 - **Domain activation in Axiom pipeline** — `WatchAxioms` or Synapse-L4 emitter needs to stamp `domain` on each Axiom payload for domain-scoped RAG to activate; see ADR-0018
 - **Backpressure dashboard** — surface `sentinel:consumer_lag` on the metrics dashboard (the key is already written by the worker; just needs a UI widget)
-- **End-to-end idempotency audit** — (1) audit that EventHorizon event ID survives as `source_id` through Synapse-L4 onto the Axiom; (2) add early-exit `EXISTS` check in `AxiomProcessorService` before AI call so duplicate `source_id`s skip Gemini entirely. DB-layer dedup already exists at line 114 but fires too late.
+- **End-to-end idempotency audit** — (1) audit that EventHorizon event ID survives as `source_id` through Synapse-L4 onto the Axiom; (2) add early-exit `EXISTS` check in `AxiomProcessorService` before AI call so duplicate `source_id`s skip the AI call entirely. DB-layer dedup already exists at line 114 but fires too late.
+- **Gemini/OpenRouter hardcoded timeouts** — `GeminiDriver`/`OpenRouterDriver`'s `callModel()` still hardcode `Http::timeout(15)`/`Http::timeout(30)` inline rather than reading from config; `OllamaDriver`'s timeout is config-backed (`services.ollama.chat_timeout`) since it's new, but the other two weren't touched when `AbstractComplianceDriver` was extracted (ADR-0027) — out of scope for that change, noted here instead
 
 ## Claude Code Workflow Notes
 
