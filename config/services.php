@@ -64,6 +64,8 @@ return [
         'url' => env('OLLAMA_URL', 'http://localhost:11434'),
         'embedding_model' => env('OLLAMA_EMBEDDING_MODEL', 'nomic-embed-text'),
         'timeout' => env('OLLAMA_EMBEDDING_TIMEOUT', 10),
+        'chat_model' => env('OLLAMA_CHAT_MODEL', '32qwen3.5:latest'),
+        'chat_timeout' => env('OLLAMA_CHAT_TIMEOUT', 60),
     ],
 
 ];

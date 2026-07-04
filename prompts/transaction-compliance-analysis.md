@@ -1,11 +1,12 @@
 # Prompt: Transaction Compliance Analysis
 
-**Used by:** `App\Services\Compliance\GeminiDriver`, `App\Services\Compliance\OpenRouterDriver` (via `analyzeTransaction()`, called from `App\Services\TransactionProcessorService` on a Tier 2 cache miss)
-**Model:** `gemini-2.0-flash` (Gemini), `meta-llama/llama-3.3-8b-instruct:free` default (OpenRouter, overridable via `OPENROUTER_MODEL`)
-**Version:** 1
+**Used by:** `App\Services\Compliance\GeminiDriver`, `App\Services\Compliance\OpenRouterDriver`, `App\Services\Compliance\OllamaDriver` (via `analyzeTransaction()`, called from `App\Services\TransactionProcessorService` on a Tier 2 cache miss)
+**Model:** `gemini-2.0-flash` (Gemini), `meta-llama/llama-3.3-8b-instruct:free` default (OpenRouter, overridable via `OPENROUTER_MODEL`), `qwen3.5:9b-q4_K_M` 32k-context tag default (Ollama, overridable via `OLLAMA_CHAT_MODEL`)
+**Version:** 2
 **Template file:** `prompts/transaction-compliance-analysis.txt`
 
 ### Changelog
+- **v2** (2026-07-04): Extended to `OllamaDriver` (ADR-0027). No prompt text change — only the driver roster using this template grew.
 - **v1** (2026-07-03): Initial version. Introduced to close the ADR-0007 drift — Tier 2 (`TransactionProcessorService` cache miss) now calls the AI driver with policy RAG instead of the rule-based `ThreatAnalysisService`, matching the documented three-tier design.
 
 ---
@@ -35,4 +36,4 @@ See [`transaction-compliance-analysis.txt`](transaction-compliance-analysis.txt)
 
 - `risk_level` is mapped to `isThreat` in `TransactionProcessorService` as `risk_level !== 'low'` — anything above low (medium/high/critical/unknown) is treated as a threat.
 - If the AI call throws (quota, timeout, malformed response after retries), `TransactionProcessorService`'s outer catch routes to `ThreatAnalysisService` (Tier 3) — the same fallback used for embedding/vector infra failures.
-- If policy RAG fails, `{policy_context}` falls back to `"No specific policy context retrieved."` and the call proceeds in both drivers.
+- If policy RAG fails, `{policy_context}` falls back to `"No specific policy context retrieved."` and the call proceeds in all three drivers.

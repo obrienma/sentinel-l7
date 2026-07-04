@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Services\Compliance\GeminiDriver;
+use App\Services\Compliance\OllamaDriver;
 use App\Services\Compliance\OpenRouterDriver;
 use Illuminate\Support\Manager;
 
@@ -21,5 +22,10 @@ class ComplianceManager extends Manager
     protected function createOpenrouterDriver(): OpenRouterDriver
     {
         return $this->container->make(OpenRouterDriver::class);
+    }
+
+    protected function createOllamaDriver(): OllamaDriver
+    {
+        return $this->container->make(OllamaDriver::class);
     }
 }
