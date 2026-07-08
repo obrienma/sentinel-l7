@@ -156,7 +156,7 @@ open http://localhost:8000/dashboard
 | `php artisan sentinel:watch-axioms` | Axiom stream worker |
 | `php artisan sentinel:ingest` | Index policy docs into vector KB (bumps policy epoch) |
 | `php artisan sentinel:reset-metrics` | Reset dashboard counters |
-| `php artisan sentinel:export-ground-truth --count=200 --output=ground-truth.json` | Export pre-AI labeled transactions (sentinel-eval offline eval ground truth) |
+| `php artisan sentinel:export-ground-truth --count=200 --output=ground-truth.json` | Export pre-AI labeled transactions (arbiter-l8 offline eval ground truth) |
 | `./vendor/bin/pest --filter=TestName` | Run a single test |
 | `./vendor/bin/pint` | Run the Pint linter |
 
@@ -464,7 +464,7 @@ No dashboard change is needed once a driver call succeeds — the queries are al
 
 ### 🐛 Known issues
 
-* **Semantic cache can permanently amplify a single wrong verdict for narrow-profile merchants.** The Upstash Vector cache (similarity threshold 0.95) matches on embedding similarity, not transaction identity. A merchant profile whose transactions are narrow enough in amount range and message wording (e.g. the `suspicious`-category simulation profile) can embed near-identically across every transaction it generates — so if the *first* one is ever misanalyzed, every subsequent similar transaction inherits that one stale, wrong cached verdict indefinitely, rather than getting an independent re-analysis. Discovered during sentinel-eval's Phase 3 step 8 live judge validation (worked around there via the per-request driver override, which bypasses the cache entirely — see sentinel-eval's `docs/journal/sentinel-eval-2026-07-04T1720-ground-truth-export-and-judge-validation.md`). Not yet fixed here; no cache-invalidation or per-merchant TTL exists today.
+* **Semantic cache can permanently amplify a single wrong verdict for narrow-profile merchants.** The Upstash Vector cache (similarity threshold 0.95) matches on embedding similarity, not transaction identity. A merchant profile whose transactions are narrow enough in amount range and message wording (e.g. the `suspicious`-category simulation profile) can embed near-identically across every transaction it generates — so if the *first* one is ever misanalyzed, every subsequent similar transaction inherits that one stale, wrong cached verdict indefinitely, rather than getting an independent re-analysis. Discovered during arbiter-l8's Phase 3 step 8 live judge validation (worked around there via the per-request driver override, which bypasses the cache entirely — see arbiter-l8's `docs/journal/arbiter-l8-2026-07-04T1720-ground-truth-export-and-judge-validation.md`). Not yet fixed here; no cache-invalidation or per-merchant TTL exists today.
 
 ### 📦 Production-Ready Baseline
 
@@ -491,7 +491,7 @@ No dashboard change is needed once a driver call succeeds — the queries are al
 * EmbeddingDriver stack (ADR-0025) — `GeminiEmbeddingDriver`, `OllamaEmbeddingDriver` (nomic-embed-text v1.5, 768-dim, task-prefixed `search_document`/`search_query` inputs), `EmbeddingManager` (Service Manager pattern), swap via `SENTINEL_EMBEDDING_DRIVER`; `EmbeddingService` now delegates to the resolved driver instead of calling Gemini directly. Live in this environment: Upstash Vector index recreated at 768-dim, policy KB re-ingested against Ollama.
 * Named Vector namespaces (ADR-0026) — `VectorCacheService` no longer has any bare/default-namespace methods; transaction semantic cache moved from Upstash's implicit default namespace to an explicit `transactions` namespace, matching `policies`. Sets the pattern for future namespaces (e.g. telemetry) and tenant-prefixed namespacing.
 * ADR-0007 Tier 2 drift closed — `TransactionProcessorService` now calls `ComplianceDriver::analyzeTransaction()` (Gemini/OpenRouter + policy RAG) on a cache miss instead of the rule-based `ThreatAnalysisService`; `ThreatAnalysisService` is reserved for Tier 3 (infra failure) as ADR-0007 originally specified. New `transaction-compliance-analysis` prompt added for the transaction-shaped query.
-* Per-request `ComplianceManager` driver override — `TransactionProcessorService::process()` and the `analyze_transaction` MCP tool accept an optional `driver` (`gemini`/`openrouter`/`ollama`) that bypasses the semantic vector cache entirely (no read, no write) and never falls back to Tier 3 on failure, so the same transaction can be scored through two different providers for cross-provider disagreement measurement. Built for sentinel-eval's online disagreement layer.
+* Per-request `ComplianceManager` driver override — `TransactionProcessorService::process()` and the `analyze_transaction` MCP tool accept an optional `driver` (`gemini`/`openrouter`/`ollama`) that bypasses the semantic vector cache entirely (no read, no write) and never falls back to Tier 3 on failure, so the same transaction can be scored through two different providers for cross-provider disagreement measurement. Built for arbiter-l8's online disagreement layer.
 
 #### 🔷 Axiom / Synapse-L4 Integration
 * Synapse-L4 Axiom ingestion — `synapse:axioms` Redis stream + `sentinel:watch-axioms` worker

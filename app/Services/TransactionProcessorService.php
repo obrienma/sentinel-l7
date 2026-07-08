@@ -41,7 +41,7 @@ class TransactionProcessorService
      *
      * $driverOverride forces a specific ComplianceManager driver (e.g.
      * 'gemini', 'openrouter', 'ollama') instead of the app-wide configured
-     * default — added for sentinel-eval's cross-provider disagreement
+     * default — added for arbiter-l8's cross-provider disagreement
      * scoring, which needs to call the same transaction through two
      * different providers and compare verdicts. When set, this bypasses
      * the semantic vector cache entirely (no read, no write) and never

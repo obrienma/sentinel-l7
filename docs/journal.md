@@ -961,7 +961,7 @@ Added an optional `?string $driverOverride` parameter to
 `TransactionProcessorService::process()` and a matching `driver` field on
 the `analyze_transaction` MCP tool, so a caller can force a specific
 `ComplianceManager` driver (`gemini`/`openrouter`/`ollama`) instead of the
-app-wide `SENTINEL_AI_DRIVER` default. Built for sentinel-eval's
+app-wide `SENTINEL_AI_DRIVER` default. Built for arbiter-l8's
 cross-provider disagreement layer, which needs to run the same
 transaction through two providers and compare verdicts — something
 app-wide, config-only driver selection couldn't support. `ComplianceManager`
@@ -1068,10 +1068,10 @@ Files: app/Console/Commands/ExportGroundTruth.php, tests/Feature/ExportGroundTru
 
 Added `sentinel:export-ground-truth`, an Artisan command that dumps
 `TransactionStreamService::generate()`'s pre-AI synthetic transactions as an
-`{"examples": [{"input", "expected_label"}]}` JSON payload — sentinel-eval's
+`{"examples": [{"input", "expected_label"}]}` JSON payload — arbiter-l8's
 offline harness (`run_eval`) consumes this directly as a new fixture
 (`tests/fixtures/sentinel_l7_ground_truth.json`), alongside its existing
-hand-written one. Built for sentinel-eval's Phase 3 step 8, closing a gap
+hand-written one. Built for arbiter-l8's Phase 3 step 8, closing a gap
 flagged all the way back at step 5: the harness only ever had a
 hand-written, Synapse-shaped fixture to validate the judge against, which
 produced a nonsensical 6.7% accuracy number once the judge started
@@ -1095,7 +1095,7 @@ ground-truth vocabulary, `expected_label` uses exactly the same collapse
 (`$isThreat ? 'high' : 'low'` as its own rule-based-fallback convention),
 so the exported fixture stays consistent with a rule Sentinel-L7 already
 follows rather than introducing a second, competing one. Downstream,
-sentinel-eval's validation run treated any of `medium`/`high`/`critical`
+arbiter-l8's validation run treated any of `medium`/`high`/`critical`
 as "caught the threat" when scoring against this binary ground truth,
 matching `is_threat = risk_level !== 'low'` exactly.
 
