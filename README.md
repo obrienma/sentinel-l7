@@ -507,6 +507,7 @@ No dashboard change is needed once a driver call succeeds — the queries are al
 * Transaction history — processed transactions persisted to Postgres `transactions` table
 * Compliance dashboard — Flags / Events nav pages surfacing `compliance_events`
 * Compliance report CSV export — `GET /compliance/export` streams flagged/all events chunked at 500 rows; optional `from`/`to` date filters; UI date-range picker on the Compliance page
+* Transaction-pipeline idempotency guard — partial unique index on `transactions.txn_id` (excludes `driver_override`, which intentionally writes multiple rows per transaction) plus an early-exit dedup check in `TransactionProcessorService::process()`, closing an `XAUTOCLAIM`-redelivery double-billing risk found while drafting ADR-0028; mirrors the Axiom pipeline's existing `source_id` dedup pattern
 
 #### 👁️ Frontend & Operations
 * React 19 + shadcn/ui dashboard with live transaction feed

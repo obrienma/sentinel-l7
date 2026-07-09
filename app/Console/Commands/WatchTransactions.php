@@ -71,6 +71,7 @@ class WatchTransactions extends Command
         $tag = match($result['source']) {
             'cache_hit'  => "<fg=green>✅ Cache hit [{$result['elapsed_ms']}ms]</>",
             'cache_miss' => "<fg=yellow>❌ Cache miss [{$result['elapsed_ms']}ms]</>",
+            'duplicate'  => "<fg=cyan>♻️  Duplicate — skipped [{$result['elapsed_ms']}ms]</>",
             default      => "<fg=yellow>⚠️  Fallback [{$result['elapsed_ms']}ms]</>",
         };
 

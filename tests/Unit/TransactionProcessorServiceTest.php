@@ -761,3 +761,182 @@ it('records no metrics and no Transaction for a driver override when observe is 
 
     Mockery::close();
 });
+
+// ─── Idempotency (XAUTOCLAIM redelivery dedup) ─────────────────────────────────
+
+it('does not call the AI driver again and does not persist a duplicate row when txn_id is re-delivered after a cache_miss', function () use ($baseTxn, $vector) {
+    tps_allowRedis();
+
+    $ai = Mockery::mock(ComplianceDriver::class);
+    $ai->shouldReceive('analyzeTransaction')->once()->andReturn([
+        'narrative' => 'Layer 7 Clear', 'risk_level' => 'low', 'policy_refs' => [], 'confidence' => 0.9,
+    ]);
+
+    $processor = tps_processor(tps_embeds($vector), tps_analyzerUnused(), tps_cacheMiss(), $ai);
+
+    $first = $processor->process($baseTxn);
+    $second = $processor->process($baseTxn);
+
+    expect($first['source'])->toBe('cache_miss')
+        ->and($second['source'])->toBe('duplicate')
+        ->and($second['is_threat'])->toBeFalse()
+        ->and(Transaction::count())->toBe(1);
+
+    Mockery::close();
+});
+
+it('does not persist a duplicate row when txn_id is re-delivered after a cache_hit', function () use ($baseTxn, $vector) {
+    tps_allowRedis();
+    $processor = tps_processor(tps_embeds($vector), tps_analyzerUnused(), tps_cacheHit(false));
+
+    $first = $processor->process($baseTxn);
+    $second = $processor->process($baseTxn);
+
+    expect($first['source'])->toBe('cache_hit')
+        ->and($second['source'])->toBe('duplicate')
+        ->and(Transaction::count())->toBe(1);
+
+    Mockery::close();
+});
+
+it('does not re-run the rule-based analyzer when txn_id is re-delivered after a fallback', function () use ($baseTxn) {
+    tps_allowRedis();
+
+    $analyzer = Mockery::mock(ThreatAnalysisService::class);
+    $analyzer->shouldReceive('analyze')->once()->andReturn(
+        ThreatResult::clear(['merchant' => 'ACME Corp', 'amount' => 150.00])
+    );
+
+    $processor = tps_processor(tps_embeddingFails(), $analyzer, tps_cacheUnused());
+
+    $first = $processor->process($baseTxn);
+    $second = $processor->process($baseTxn);
+
+    expect($first['source'])->toBe('fallback')
+        ->and($second['source'])->toBe('duplicate')
+        ->and(Transaction::count())->toBe(1);
+
+    Mockery::close();
+});
+
+it('does not apply the duplicate check when observe is false', function () use ($baseTxn, $vector) {
+    Redis::shouldReceive('executeRaw')->never();
+
+    $ai = Mockery::mock(ComplianceDriver::class);
+    $ai->shouldReceive('analyzeTransaction')->twice()->andReturn([
+        'narrative' => 'Layer 7 Clear', 'risk_level' => 'low', 'policy_refs' => [], 'confidence' => 0.9,
+    ]);
+
+    $processor = tps_processor(tps_embeds($vector), tps_analyzerUnused(), tps_cacheMiss(), $ai);
+
+    $processor->process($baseTxn, observe: false);
+    $second = $processor->process($baseTxn, observe: false);
+
+    expect($second['source'])->toBe('cache_miss')
+        ->and(Transaction::count())->toBe(0);
+
+    Mockery::close();
+});
+
+it('does not skip a driver_override call due to an existing cache_miss row for the same txn_id', function () use ($baseTxn, $vector) {
+    tps_allowRedis();
+    $ai = tps_ai(['narrative' => 'Layer 7 Clear', 'risk_level' => 'low']);
+    $manager = tps_managerResolving('openrouter', ['narrative' => 'High value', 'risk_level' => 'high']);
+
+    $processor = tps_processor(tps_embeds($vector), tps_analyzerUnused(), tps_cacheMiss(), $ai, $manager);
+
+    $processor->process($baseTxn);
+    $override = $processor->process($baseTxn, driverOverride: 'openrouter');
+
+    expect($override['source'])->toBe('driver_override')
+        ->and(Transaction::count())->toBe(2);
+
+    Mockery::close();
+});
+
+it('allows two driver_override calls for the same txn_id (cross-provider comparison)', function () use ($baseTxn) {
+    tps_allowRedis();
+    $gemini = Mockery::mock(ComplianceDriver::class);
+    $gemini->shouldReceive('analyzeTransaction')->once()->andReturn([
+        'narrative' => 'Layer 7 Clear', 'risk_level' => 'low', 'policy_refs' => [], 'confidence' => 0.9,
+    ]);
+    $openrouter = Mockery::mock(ComplianceDriver::class);
+    $openrouter->shouldReceive('analyzeTransaction')->once()->andReturn([
+        'narrative' => 'High value', 'risk_level' => 'high', 'policy_refs' => [], 'confidence' => 0.8,
+    ]);
+
+    $manager = Mockery::mock(ComplianceManager::class);
+    $manager->shouldReceive('driver')->once()->with('gemini')->andReturn($gemini);
+    $manager->shouldReceive('driver')->once()->with('openrouter')->andReturn($openrouter);
+
+    $processor = tps_processor(tps_embeddingUnused(), tps_analyzerUnused(), tps_cacheUnused(), null, $manager);
+
+    $first = $processor->process($baseTxn, driverOverride: 'gemini');
+    $second = $processor->process($baseTxn, driverOverride: 'openrouter');
+
+    expect($first['source'])->toBe('driver_override')
+        ->and($second['source'])->toBe('driver_override')
+        ->and(Transaction::count())->toBe(2)
+        ->and(Transaction::where('source', 'driver_override')->count())->toBe(2);
+
+    Mockery::close();
+});
+
+it('does not skip a normal redelivery due to an earlier driver_override row for the same txn_id', function () use ($baseTxn, $vector) {
+    tps_allowRedis();
+    $manager = tps_managerResolving('gemini', ['narrative' => 'Layer 7 Clear', 'risk_level' => 'low']);
+    $ai = tps_ai(['narrative' => 'Layer 7 Clear', 'risk_level' => 'low']);
+
+    $processor = tps_processor(tps_embeds($vector), tps_analyzerUnused(), tps_cacheMiss(), $ai, $manager);
+
+    $processor->process($baseTxn, driverOverride: 'gemini');
+    $normal = $processor->process($baseTxn);
+
+    expect($normal['source'])->toBe('cache_miss')
+        ->and(Transaction::count())->toBe(2);
+
+    Mockery::close();
+});
+
+it('rejects two non-driver_override rows sharing a txn_id at the DB layer', function () {
+    Transaction::create(['txn_id' => 'dup-1', 'merchant' => 'A', 'message' => 'x', 'source' => 'cache_miss']);
+
+    expect(fn () => Transaction::create(['txn_id' => 'dup-1', 'merchant' => 'B', 'message' => 'y', 'source' => 'cache_hit']))
+        ->toThrow(\Illuminate\Database\UniqueConstraintViolationException::class);
+});
+
+it('allows two driver_override rows sharing a txn_id at the DB layer', function () {
+    Transaction::create(['txn_id' => 'dup-2', 'merchant' => 'A', 'message' => 'x', 'source' => 'driver_override']);
+
+    expect(fn () => Transaction::create(['txn_id' => 'dup-2', 'merchant' => 'B', 'message' => 'y', 'source' => 'driver_override']))
+        ->not->toThrow(\Illuminate\Database\UniqueConstraintViolationException::class);
+
+    expect(Transaction::where('txn_id', 'dup-2')->count())->toBe(2);
+});
+
+it('suppresses a UniqueConstraintViolationException from a concurrent duplicate insert without propagating', function () use ($baseTxn, $vector) {
+    // The EXISTS pre-check can't catch a true concurrent race (two workers
+    // reclaim the same message and both pass EXISTS before either inserts).
+    // sqlite :memory: is single-connection, so that race isn't reproducible
+    // here — force the exact exception the DB constraint would throw via an
+    // Eloquent model event, so the catch/suppress logic itself is verified.
+    tps_allowRedis();
+    $ai = tps_ai(['narrative' => 'Layer 7 Clear', 'risk_level' => 'low']);
+
+    Transaction::creating(function () {
+        throw new \Illuminate\Database\UniqueConstraintViolationException(
+            'sqlite',
+            'insert into "transactions" ...',
+            [],
+            new Exception('UNIQUE constraint failed: transactions.txn_id')
+        );
+    });
+
+    $result = tps_processor(tps_embeds($vector), tps_analyzerUnused(), tps_cacheMiss(), $ai)->process($baseTxn);
+
+    expect($result['source'])->toBe('cache_miss')
+        ->and(Transaction::count())->toBe(0);
+
+    Transaction::flushEventListeners();
+    Mockery::close();
+});

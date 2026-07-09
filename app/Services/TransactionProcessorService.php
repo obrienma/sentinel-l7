@@ -80,6 +80,16 @@ class TransactionProcessorService
             return $this->summary('driver_override', $isThreat, $message, $startTime, $riskLevel, $narrative, $confidence, $policyRefs);
         }
 
+        if ($observe && Transaction::where('txn_id', $txnId)
+            ->where('source', '!=', 'driver_override')
+            ->exists()) {
+            \Illuminate\Support\Facades\Log::info('TransactionProcessorService: duplicate txn_id — skipping AI call', [
+                'txn_id' => $txnId,
+            ]);
+
+            return $this->summary('duplicate', false, 'Duplicate transaction — already processed, skipped', $startTime, 'skipped', null, null, []);
+        }
+
         try {
             $fingerprint = $this->embedding->createTransactionFingerprint($data);
             $vector = $this->embedding->embed($fingerprint);
@@ -237,6 +247,46 @@ class TransactionProcessorService
         string $source,
         ?float $rawAmount = null,
     ): void {
+        $fields = [
+            'txn_id' => $txnId,
+            'merchant' => $merchant,
+            'amount' => $rawAmount,
+            'currency' => $currency ?: null,
+            'is_threat' => $isThreat,
+            'message' => $message,
+            'source' => $source,
+        ];
+
+        $created = true;
+
+        try {
+            if ($source === 'driver_override') {
+                // Intentional multiple rows per txn_id — arbiter-l8's
+                // cross-provider comparison calls process() once per
+                // provider for the same transaction on purpose. Excluded
+                // from the partial unique index; never a dedup candidate.
+                Transaction::create($fields);
+            } else {
+                // txn_id is only guaranteed unique (via the partial index)
+                // among non-driver_override rows — scope the lookup to
+                // match, so this can't collide with an unrelated override row.
+                $txn = Transaction::where('source', '!=', 'driver_override')
+                    ->firstOrCreate(['txn_id' => $txnId], $fields);
+                $created = $txn->wasRecentlyCreated;
+            }
+        } catch (\Illuminate\Database\UniqueConstraintViolationException) {
+            // Concurrent redelivery: another worker's process() call passed
+            // the EXISTS pre-check and inserted this txn_id before we did.
+            \Illuminate\Support\Facades\Log::info('TransactionProcessorService: duplicate txn_id suppressed by DB constraint', [
+                'txn_id' => $txnId,
+            ]);
+            $created = false;
+        }
+
+        if (! $created) {
+            return;
+        }
+
         $entry = json_encode([
             'id' => $txnId,
             'merchant' => $merchant,
@@ -250,15 +300,5 @@ class TransactionProcessorService
 
         Redis::executeRaw(['LPUSH', self::FEED_KEY, $entry]);
         Redis::executeRaw(['LTRIM', self::FEED_KEY, 0, self::FEED_LENGTH - 1]);
-
-        Transaction::create([
-            'txn_id' => $txnId,
-            'merchant' => $merchant,
-            'amount' => $rawAmount,
-            'currency' => $currency ?: null,
-            'is_threat' => $isThreat,
-            'message' => $message,
-            'source' => $source,
-        ]);
     }
 }
