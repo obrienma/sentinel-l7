@@ -5,7 +5,7 @@
 
 ## Context
 
-Ledger-L5 is being ported to Python/FastAPI and will pull usage data from sentinel-l7 to (a) bill for AI-driven compliance calls and (b) report a "calls avoided" savings metric attributable to the semantic cache. Sentinel-l7 has no billing concept of its own today — this ADR exists to define, for an external consumer, which persisted rows represent a billable AI call versus a degraded/no-op outcome.
+Ledger-L5 is being ported to Python/FastAPI and will pull usage data from sentinel-l7 to (a) bill for AI-driven compliance calls and (b) report a customer-facing "calls avoided via caching" savings metric attributable to the semantic cache (per Ledger-L5 ADR-0005, the Sentinel-L7 usage-pull contract). Sentinel-l7 has no billing concept of its own today — this ADR exists to define, for an external consumer, which persisted rows represent a billable AI call versus a degraded/no-op outcome. The savings figure in particular must reflect genuine cache hits only — a customer told "N calls avoided" needs to be able to trust that count doesn't include attempted-and-failed calls that happened to avoid the cache.
 
 Two independent pipelines persist call outcomes, in two tables, with two different fields — there is no unified schema:
 
@@ -15,6 +15,8 @@ Two independent pipelines persist call outcomes, in two tables, with two differe
 One asymmetry worth naming: a failed `driver_override` call never persists a row. `TransactionProcessorService::process()`'s override branch (`app/Services/TransactionProcessorService.php:67-81`) does not catch exceptions — by design (ADR for the driver-override feature, Phase 17: a second provider's call must fail loudly, not silently degrade to the shared rule-based verdict). The exception propagates before `recordTransaction()` runs. So "exclude failed `driver_override` rows from billing" is already true by construction on the sentinel-l7 side — there is nothing in the `transactions` table for Ledger-L5 to filter out.
 
 No "calls avoided" / savings metric exists in sentinel-l7 today. This ADR defines the semantics an external consumer must apply; it does not add a new metric here.
+
+A separate, unresolved ambiguity inside `fallback`/`'fallback'` itself: sentinel-l7 does not currently distinguish a failure that occurred before any request left the process (e.g. embedding service unreachable — no provider ever contacted, definitely no cost) from one that occurred after a request reached the provider (e.g. a timeout after tokens were sent — cost may have been incurred regardless of the outcome). This isn't hypothetical. In `TransactionProcessorService::process()`, the single `catch (\Throwable)` block wraps the embedding call, the vector search, the AI driver call, *and* the post-success `vectorCache->upsertNamespace()` write — so a successful AI call whose cache write subsequently throws is discarded entirely: the real (paid-for) verdict is replaced by the rule-based Tier 3 result, and `source` is written as `fallback`. That row is billing-invisible under the classification below despite representing a completed, likely-billed provider call. This ADR does not resolve that instrumentation gap (see Consequences); it only fixes the billing treatment of whatever lands in `fallback` today, known-imperfect boundary included.
 
 ## Decision
 
@@ -35,7 +37,8 @@ No "calls avoided" / savings metric exists in sentinel-l7 today. This ADR define
 - Conservative-by-default billing (never charge for a failed call) avoids disputed invoices without requiring a reconciliation process on day one.
 
 **Negative:**
-- Never billing `fallback` rows means a sustained AI-provider outage (e.g. the Ollama-host-down scenario named in ADR-0027's consequences) is invisible in revenue, not just in compliance-quality metrics. Should be monitored via the existing `sentinel_metrics_fallback_count` Redis key rather than assumed rare.
+- Never billing `fallback` rows means any provider cost actually incurred on the way to a `fallback` outcome (a dispatched-but-timed-out request, or the successful-call-then-failed-cache-write case in Context) is absorbed silently rather than billed or even made visible — not just a compliance-quality risk, a revenue one. A sustained AI-provider outage (e.g. the Ollama-host-down scenario named in ADR-0027's consequences) would compound this. Should be monitored via the existing `sentinel_metrics_fallback_count` Redis key rather than assumed rare.
+- This decision should be revisited if the fallback rate or per-call token cost makes that gap material — at that point, distinguishing pre-send from post-send failure (e.g. a span attribute marking whether the provider request was actually dispatched) becomes worth the added instrumentation. Not built now because there's no evidence yet that it's needed.
 - Two tables, two field names, two filter expressions for the same underlying question ("did we pay for an AI call?") — Ledger-L5 must implement and maintain both paths separately. Unifying the schema is out of scope for this decision.
 
 ## Alternatives Considered
