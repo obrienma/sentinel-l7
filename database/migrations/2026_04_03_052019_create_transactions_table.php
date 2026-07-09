@@ -19,7 +19,7 @@ return new class extends Migration
             $table->string('currency', 10)->nullable();
             $table->boolean('is_threat')->default(false);
             $table->text('message');
-            $table->string('source');  // cache_hit | cache_miss | fallback
+            $table->string('source');  // cache_hit | cache_miss | fallback | driver_override
             $table->timestamps();
         });
     }

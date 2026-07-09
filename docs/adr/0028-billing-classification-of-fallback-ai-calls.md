@@ -1,7 +1,7 @@
 # ADR-0028: Billing Classification of Attempted-but-Failed AI Calls
 
 **Date:** 2026-07-09
-**Status:** Proposed
+**Status:** Accepted
 
 ## Context
 
