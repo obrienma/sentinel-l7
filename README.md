@@ -461,7 +461,6 @@ No dashboard change is needed once a driver call succeeds — the queries are al
 * [ ] **Fingerprint field reconciliation (ADR-0002/ADR-0015)** — the transaction fingerprint now includes a randomly-templated `message` field, adding entropy that may suppress cache hits; revisit alongside the open amount-representation (ADR-0002) and similarity-threshold (ADR-0015) questions
 * [ ] **Ollama embedding threshold re-validation (ADR-0015/ADR-0025)** — cutover is live (`SENTINEL_EMBEDDING_DRIVER=ollama`, Upstash Vector index recreated at 768-dim, `sentinel:ingest` re-run against nomic-embed-text v1.5); still need to re-validate `UPSTASH_VECTOR_THRESHOLD` against nomic's score distribution before treating `ollama` as the production default
 * [ ] **Telemetry namespace** — add a third named Upstash Vector namespace (e.g. `telemetry`) following the pattern established in ADR-0026; no implicit/default namespace usage anywhere in the codebase
-* [ ] **`GET /usage` endpoint (ADR-0029)** — dual per-table cursor pagination (`transactions`/`compliance_events`, both auto-increment `id`) with a 60s safety-lag window, for Ledger-L5's usage-pull; not yet built, supersedes ADR-0028's "no new instrumentation" line
 
 ### 🐛 Known issues
 
@@ -509,6 +508,7 @@ No dashboard change is needed once a driver call succeeds — the queries are al
 * Compliance report CSV export — `GET /compliance/export` streams flagged/all events chunked at 500 rows; optional `from`/`to` date filters; UI date-range picker on the Compliance page
 * Transaction-pipeline idempotency guard — partial unique index on `transactions.txn_id` (excludes `driver_override`, which intentionally writes multiple rows per transaction) plus an early-exit dedup check in `TransactionProcessorService::process()`, closing an `XAUTOCLAIM`-redelivery double-billing risk found while drafting ADR-0028; mirrors the Axiom pipeline's existing `source_id` dedup pattern
 * Billing classification (ADR-0028, Accepted) — defines which `transactions.source`/`compliance_events.driver_used` rows Ledger-L5's usage-pull query should treat as billable vs. cache-savings vs. excluded; no sentinel-l7 instrumentation beyond the idempotency guard above, which was a prerequisite for the classification to be safe to rely on
+* `GET /usage` endpoint (ADR-0029) — dual per-pipeline cursor pull (`since_transactions`/`since_compliance_events`, both auto-increment `id`) with a config-backed page size and safety-lag window; `X-Ledger-Api-Key`-gated (`VerifyLedgerApiKey` middleware), HTTPS-enforced outside local/testing, 401 on missing/invalid key
 
 #### 👁️ Frontend & Operations
 * React 19 + shadcn/ui dashboard with live transaction feed

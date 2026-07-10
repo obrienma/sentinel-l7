@@ -68,4 +68,10 @@ return [
         'chat_timeout' => env('OLLAMA_CHAT_TIMEOUT', 60),
     ],
 
+    'ledger_l5' => [
+        // Shared secret Ledger-L5 presents via the X-Ledger-Api-Key header
+        // on GET /usage (ADR-0029). First-class secret — never logged.
+        'api_key' => env('LEDGER_L5_API_KEY'),
+    ],
+
 ];

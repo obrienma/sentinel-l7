@@ -4,6 +4,7 @@ use App\Http\Controllers\AuthController;
 use App\Http\Controllers\ComplianceController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\HomeController;
+use App\Http\Controllers\UsageController;
 use Illuminate\Support\Facades\Route;
 
 // Public
@@ -26,3 +27,6 @@ Route::middleware('auth')->group(function () {
     Route::get('/compliance', [ComplianceController::class, 'index'])->name('compliance');
     Route::get('/compliance/export', [ComplianceController::class, 'export'])->name('compliance.export');
 });
+
+// Ledger-L5 usage pull (ADR-0029) — API-key gated, not a user session route.
+Route::get('/usage', [UsageController::class, 'index'])->name('usage')->middleware('ledger.auth');

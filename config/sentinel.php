@@ -37,6 +37,15 @@ return [
         'delivery_count_limit' => env('SENTINEL_RECLAIM_DELIVERY_LIMIT', 3),
     ],
 
+    'usage' => [
+        // GET /usage (ADR-0029) — max rows returned per pipeline per pull,
+        // and how many seconds of the most recent rows to withhold so an
+        // in-flight transaction has time to commit before a cursor can
+        // advance past it.
+        'page_size' => env('SENTINEL_USAGE_PAGE_SIZE', 500),
+        'safety_lag_seconds' => env('SENTINEL_USAGE_SAFETY_LAG_SECONDS', 60),
+    ],
+
     'simulation' => [
         'merchants' => [
             [

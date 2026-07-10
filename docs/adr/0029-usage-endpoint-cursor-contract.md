@@ -1,7 +1,7 @@
 # ADR-0029: `GET /usage` Endpoint — Cursor Contract for Ledger-L5
 
 **Date:** 2026-07-09
-**Status:** Proposed
+**Status:** Accepted
 
 ## Context
 
