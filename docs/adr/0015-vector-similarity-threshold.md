@@ -1,7 +1,7 @@
-# ADR-0003: Vector Similarity Threshold for Semantic Cache
+# ADR-0015: Vector Similarity Threshold for Semantic Cache
 
 **Date:** 2026-03-27
-**Status:** Proposed
+**Status:** Accepted (2026-03-28)
 
 ## Context
 
@@ -13,15 +13,20 @@ Most semantic cache implementations use thresholds in the 0.88–0.92 range.
 
 ## Decision
 
-Pending empirical testing. Lower `UPSTASH_VECTOR_THRESHOLD` to `0.90` in `.env`, run `php artisan sentinel:reset-metrics` and `php artisan sentinel:stream --limit=200`, and observe the resulting hit rate and the similarity scores logged for near-identical transactions. If the scores for genuinely similar transactions cluster above 0.90, adopt that threshold. Adjust further if needed.
+Adopt `0.90` as the default `UPSTASH_VECTOR_THRESHOLD` (`config/services.php`), shipped alongside ADR-0002's amount bucketing in commit `48b83bd`.
 
 The threshold is an env var and can be changed without code deployment.
 
+## Follow-up (outstanding)
+
+- No hit-rate benchmark has been recorded for the 0.90 threshold combined with ADR-0002's bucketed amounts — the same benchmark run should cover both (see ADR-0002's follow-up).
+- This tuning was done against Gemini `gemini-embedding-001` embeddings. ADR-0025's switch to `nomic-embed-text` (768-dim) changes the score distribution, so 0.90 must be re-validated from scratch against nomic — there's no reason to assume the value transfers.
+
 ## Consequences
 
-**If threshold is lowered to 0.90:**
+**At 0.90 (adopted):**
 - More transactions qualify as cache hits, reducing AI API calls and cost.
 - Risk of false positives: a transaction that is similar but not identical in compliance terms could reuse an incorrect cached verdict. The fingerprint design (merchant + category + amount tier + time-of-day) is the first line of defence against this — if the fingerprint captures compliance-relevant dimensions correctly, a 0.90 score reflects genuine semantic equivalence.
 
-**If threshold remains at 0.95:**
+**At 0.95 (rejected):**
 - Higher precision at the cost of hit rate. More transactions reach the AI, increasing cost and latency.

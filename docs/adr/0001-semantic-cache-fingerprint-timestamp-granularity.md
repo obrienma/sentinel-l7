@@ -5,13 +5,13 @@
 
 ## Context
 
-The semantic cache compares transaction fingerprints via vector similarity (cosine) using Upstash Vector. The original fingerprint included the exact transaction timestamp formatted as `HH:MM` (e.g. `14:23`). This made every transaction fingerprint unique to the minute, since no two transactions in a real stream share the same timestamp. As a result, cache hits were structurally impossible for the time field — two otherwise identical transactions (same merchant, category, amount) would never match because their timestamps differed.
+The semantic cache compares transaction fingerprints via vector similarity (cosine) using Upstash Vector. The original fingerprint included the exact transaction timestamp formatted as `HH:MM` (e.g. `14:23`). This made every transaction fingerprint unique to the minute, since no two transactions in a real stream share the same timestamp. As a result, the time field could never contribute to a match — two otherwise identical transactions (same merchant, category, amount) were pushed apart in embedding space because their timestamps differed.
 
-The cache hit rate observed was 29%, with 0 hits on a cold cache run of 57 transactions.
+The overall observed cache hit rate was 29% (measured on a 2,293-transaction run — see ADR-0015); a separate cold-cache run of 57 transactions produced 0 hits.
 
 ## Decision
 
-Replace the exact `HH:MM` timestamp with a time-of-day bucket: `night`, `morning`, `afternoon`, or `evening`. Boundaries: night (00:00–05:59), morning (06:00–11:59), afternoon (12:00–16:59), evening (17:00–20:59).
+Replace the exact `HH:MM` timestamp with a time-of-day bucket: `night`, `morning`, `afternoon`, or `evening`. Boundaries: morning (06:00–11:59), afternoon (12:00–16:59), evening (17:00–20:59), night (21:00–05:59, wrapping midnight).
 
 ## Consequences
 

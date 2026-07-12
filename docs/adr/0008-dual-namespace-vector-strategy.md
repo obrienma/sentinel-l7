@@ -1,7 +1,7 @@
 # ADR-0008: Dual-Namespace Vector Strategy (Cache vs. RAG)
 
 **Date:** 2026-02-05
-**Status:** Accepted
+**Status:** Accepted (amended — the implicit `default` namespace was retired in favour of an explicit `transactions` namespace, see ADR-0026; the cache threshold default is now 0.90, see ADR-0015; the dual-namespace support noted below as pending has since been fully implemented in `VectorCacheService`.)
 
 ## Context
 

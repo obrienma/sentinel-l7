@@ -16,7 +16,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 composer dev               # all five processes: serve, queue, logs, vite, sentinel:watch-axioms
 composer test              # Pest test suite
 
-php artisan sentinel:stream --limit=100   # simulate transaction stream (writes to sentinel:transactions)
+php artisan sentinel:stream --limit=100   # simulate transaction stream (writes to the `transactions` stream)
 php artisan sentinel:watch                # transaction stream worker (run alongside sentinel:stream for manual testing)
 php artisan sentinel:ingest               # index policy docs into vector KB
 php artisan sentinel:reset-metrics        # reset dashboard counters
@@ -38,7 +38,7 @@ Both workers run an `XAUTOCLAIM` pass at the top of every loop iteration — rec
 
 **Per-transaction pipeline (worker):**
 1. Embed transaction fingerprint → active `EmbeddingDriver` (Gemini `embedding-001`, 1536-dim, or Ollama `nomic-embed-text`, 768-dim; swap via `SENTINEL_EMBEDDING_DRIVER`, see ADR-0025)
-2. Vector search (Upstash, ns:`transactions`, threshold ≥ 0.95) → cache hit returns early. No implicit/default namespace is used anywhere (ADR-0026).
+2. Vector search (Upstash, ns:`transactions`, threshold ≥ 0.90 default — ADR-0015) → cache hit returns early. No implicit/default namespace is used anywhere (ADR-0026).
 3. Cache hit is validated against `sentinel_policy_epoch` — stale epoch triggers re-analysis
 4. Cache miss → active `ComplianceDriver` analysis with policy RAG (ns:`policies`, threshold ≥ 0.70, filtered by `domain` metadata when present) — Ollama `qwen3.5` by default, or Gemini Flash/OpenRouter via `SENTINEL_AI_DRIVER` (see ADR-0027)
 5. Upsert result into vector cache (ns:`transactions`) → XACK
@@ -110,7 +110,7 @@ SENTINEL_AI_DRIVER=openrouter  # alternative
 
 - The fingerprint previously used exact `HH:MM` timestamps — now replaced with time-of-day buckets (night/morning/afternoon/evening). See ADR-0001.
 - Amount representation in the fingerprint is still under evaluation — exact amounts may suppress cache hits. See ADR-0002.
-- The 0.95 similarity threshold is likely too strict. Empirical testing with 0.90 is pending. See ADR-0015.
+- The cache similarity threshold default is 0.90 (lowered from 0.95 — see ADR-0015). A hit-rate benchmark at 0.90 with bucketed amounts is still outstanding, and the value must be re-validated against nomic-embed-text's score distribution (ADR-0025).
 - Gemini embedding API has a daily quota that can be exhausted during burst load testing. Alternative embedding providers (OpenAI, Ollama) are documented in ADR-0005.
 - Policy epoch invalidation: `TransactionProcessorService` checks `sentinel_policy_epoch` (a plain Redis cache key) on every cache hit. If the cached result's epoch doesn't match the current epoch, it is discarded and re-analyzed. Update this key after re-ingesting the policy KB.
 

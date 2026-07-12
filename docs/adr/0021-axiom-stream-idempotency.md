@@ -7,7 +7,7 @@
 
 ## Context
 
-The Axiom pipeline worker reads from the `synapse:axioms` Redis Stream via `XREADGROUP`. A message stays in the Pending Entry List (PEL) until the worker calls `XACK`. The reclaimer (`XAUTOCLAIM`, 60s idle threshold) re-delivers any unACKed message to another worker — the intended recovery path for crashes.
+The Axiom pipeline worker reads from the `synapse:axioms` Redis Stream via `XREADGROUP`. A message stays in the Pending Entry List (PEL) until the worker calls `XACK`. The reclaimer (at the time of this decision, the `ReclaimAxioms` daemon using `XCLAIM` at a 60s idle threshold; since replaced by an embedded `XAUTOCLAIM` pass in each worker at a 30s default — see ADR-0022) re-delivers any unACKed message to another worker — the intended recovery path for crashes.
 
 Before this decision, `AxiomProcessorService::routeToAi()` and `recordSubThreshold()` both called `ComplianceEvent::create()` unconditionally. If a worker completed `create()` but crashed before calling `XACK`, the reclaimer would re-deliver the same message and a second `ComplianceEvent` row would be inserted for the same `source_id`. There was no unique constraint on `source_id` and no application-level guard.
 

@@ -1,7 +1,7 @@
 # ADR 0019 — Output Quality Scoring on Compliance Driver Responses
 
 **Date:** 2026-05-02
-**Status:** Accepted
+**Status:** Accepted (amended 2026-07-04 — the per-driver `logResponseQuality()` implementation described below was hoisted into `AbstractComplianceDriver` by ADR-0027; the rubric, thresholds, and log output are unchanged)
 
 ---
 

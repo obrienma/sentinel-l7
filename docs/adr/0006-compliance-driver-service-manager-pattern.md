@@ -1,7 +1,7 @@
 # ADR-0006: ComplianceDriver Interface + Service Manager Pattern for AI Backends
 
 **Date:** 2026-02-05
-**Status:** Accepted
+**Status:** Accepted (amended 2026-07-04 — `OpenRouterDriver` is no longer a stub; all three drivers (`ollama` — now the default, `gemini`, `openrouter`) share `AbstractComplianceDriver`, see ADR-0027. The embedding-side gap named in Consequences was closed by the `EmbeddingDriver`/`EmbeddingManager` pattern in ADR-0025.)
 
 ## Context
 

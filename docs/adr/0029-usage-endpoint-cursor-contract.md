@@ -33,7 +33,7 @@ Companion ADR: Ledger-L5's ADR-0003 is the client-side half of this contract —
   "next_cursor": { "since_transactions": <max id returned>, "since_compliance_events": <max id returned> }
 }
 ```
-Both arrays ordered by `id ASC`. Nested per-table arrays (not one flat array with a per-row `pipeline` tag) because the array key already carries that information, and a flat array would force a single merged ordering across two independently-sequenced tables — the same problem the rejected unified cursor has (see Alternatives).
+Both arrays ordered by `id ASC`. When an array is empty, its `next_cursor` entry echoes the request's cursor value unchanged — `next_cursor` is never null and never moves backwards, so Ledger-L5 can always persist it blindly. Nested per-table arrays (not one flat array with a per-row `pipeline` tag) because the array key already carries that information, and a flat array would force a single merged ordering across two independently-sequenced tables — the same problem the rejected unified cursor has (see Alternatives).
 
 **2a. Row shape.** Each array serializes its model's full column set as persisted — `GET /usage` doesn't project down to a billing-only subset, consistent with decision #4 below. Field lists below are the actual `$fillable`/`$casts` sets (`app/Models/Transaction.php`, `app/Models/ComplianceEvent.php`), not a new schema:
 

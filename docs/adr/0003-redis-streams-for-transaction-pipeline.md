@@ -1,7 +1,7 @@
 # ADR-0003: Redis Streams for Async Transaction Pipeline
 
 **Date:** 2026-02-05
-**Status:** Accepted
+**Status:** Accepted (amended 2026-05-16 — the dedicated reclaimer process described below was removed by ADR-0022; recovery now runs as an XAUTOCLAIM pass inside each worker's read loop. The stream key as implemented is `transactions`, not `sentinel:transactions` as originally drafted.)
 
 ## Context
 
@@ -15,7 +15,7 @@ A queue-based architecture was needed. Options considered:
 
 ## Decision
 
-Use Redis Streams (`sentinel:transactions`) as the transport layer for the transaction pipeline. Transactions are published via `XADD` and consumed by a dedicated worker process using `XREADGROUP`. A separate reclaimer process uses `XCLAIM` to recover messages that have been in the PEL longer than 60 seconds (zombie messages from crashed workers).
+Use Redis Streams (stream key `transactions`) as the transport layer for the transaction pipeline. Transactions are published via `XADD` and consumed by a dedicated worker process using `XREADGROUP`. A separate reclaimer process uses `XCLAIM` to recover messages that have been in the PEL longer than 60 seconds (zombie messages from crashed workers).
 
 ## Consequences
 

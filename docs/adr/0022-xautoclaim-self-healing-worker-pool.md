@@ -70,5 +70,5 @@ Deferred: adds infrastructure complexity. The delivery-count guard in Option B h
 - [x] Pest test: `XAUTOCLAIM` called before `XREADGROUP` in each worker loop iteration
 - [x] Pest test: a message with `delivery-count >= 3` is logged and ACKed without being processed
 - [x] README architecture diagrams updated — reclaimer node removed, XAUTOCLAIM noted on both worker edges
-- [ ] Requires Redis 6.2+ — Upstash supports this; confirm via Upstash dashboard before shipping
+- [x] Requires Redis 6.2+ — Upstash supports this; confirmed in practice: XAUTOCLAIM has run against Upstash in both workers since acceptance (2026-05-16) with no unsupported-command errors
 - [x] This ADR supersedes the reclaimer pattern described in ADR-0016 (Axiom ingestion) and the backpressure plan step 2 (which assumed extending the existing reclaimer to cover transactions)

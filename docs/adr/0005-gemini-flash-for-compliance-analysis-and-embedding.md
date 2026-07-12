@@ -1,7 +1,7 @@
 # ADR-0005: Gemini Flash for Compliance Analysis and Embedding
 
 **Date:** 2026-02-05
-**Status:** Accepted
+**Status:** Superseded in part — the embedding half by ADR-0025 (Ollama `nomic-embed-text` is now the default embedding driver) and the analysis-default half by ADR-0027 (Ollama `qwen3.5` is now the default compliance driver). Gemini remains available for both via `SENTINEL_EMBEDDING_DRIVER` / `SENTINEL_AI_DRIVER`.
 
 ## Context
 

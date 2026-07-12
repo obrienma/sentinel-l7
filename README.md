@@ -95,7 +95,7 @@ flowchart LR
 **⚡ AI & Vector**
 
 - **Ollama (default) + Gemini Flash + OpenRouter:** LLM analysis runs through a swappable `ComplianceDriver` interface backed by a Laravel Service Manager; switching providers is a single env-var change, not a code change. Default is local/self-hosted `qwen3.5:9b-q4_K_M` via Ollama (ADR-0027) — no external API quota on the compliance-analysis path.
-- **Upstash Vector:** Named-namespace strategy (ADR-0026) — `transactions` (semantic cache, ≥ 0.95 threshold) cuts repeat LLM calls by 80%+; `policies` (RAG corpus, ≥ 0.70, domain-filtered) grounds compliance rulings in indexed regulatory documents (AML, HIPAA, GDPR). No data lives in Upstash's implicit default namespace.
+- **Upstash Vector:** Named-namespace strategy (ADR-0026) — `transactions` (semantic cache, ≥ 0.90 threshold — ADR-0015) cuts repeat LLM calls by 80%+; `policies` (RAG corpus, ≥ 0.70, domain-filtered) grounds compliance rulings in indexed regulatory documents (AML, HIPAA, GDPR). No data lives in Upstash's implicit default namespace.
 
 **👁️ Frontend & Observability**
 
@@ -215,10 +215,10 @@ The system is composed of three long-running processes plus a shared intelligenc
 | Layer | Key Files | Purpose & Responsibilities |
 | :--- | :--- | :--- |
 | **🌐 Web** | `app/Http/Controllers/` · `resources/js/Pages/` | **Dashboard & API:** Inertia/React dashboard, compliance event pages, CSV export endpoint, HTTP rate-limited routes. |
-| **⚡ Transaction Worker** | `app/Console/Commands/WatchTransactions.php` · `app/Services/TransactionProcessorService.php` | **Stream Consumer:** `XREADGROUP` on `sentinel:transactions`; semantic cache check → optional AI analysis → `XACK`. `XAUTOCLAIM` recovery pass at top of every loop iteration. |
+| **⚡ Transaction Worker** | `app/Console/Commands/WatchTransactions.php` · `app/Services/TransactionProcessorService.php` | **Stream Consumer:** `XREADGROUP` on `transactions`; semantic cache check → optional AI analysis → `XACK`. `XAUTOCLAIM` recovery pass at top of every loop iteration. |
 | **🔷 Axiom Worker** | `app/Console/Commands/WatchAxioms.php` · `app/Services/AxiomProcessorService.php` | **Axiom Consumer:** `XREADGROUP` on `synapse:axioms`; threshold routing (`anomaly_score > 0.8`) → AI audit narrative → Postgres. Every Axiom persisted — no silent drops. |
-| **🧠 AI Layer** | `app/Contracts/ComplianceDriver.php` · `app/Services/ComplianceManager.php` | **Driver Abstraction:** Resolves `gemini` or `openrouter` from env via Laravel Service Manager; domain logic only depends on the `ComplianceDriver` interface. |
-| **💾 Vector Layer** | `app/Services/VectorCacheService.php` · `app/Services/EmbeddingService.php` | **Semantic Cache + RAG:** Upstash Vector `transactions` namespace (cache, ≥ 0.95) + `policies` namespace (RAG, ≥ 0.70, domain-filtered); fingerprint embedding via Ollama `nomic-embed-text` (768-dim) or Gemini `embedding-001` (1536-dim), swappable via `SENTINEL_EMBEDDING_DRIVER`. |
+| **🧠 AI Layer** | `app/Contracts/ComplianceDriver.php` · `app/Services/ComplianceManager.php` | **Driver Abstraction:** Resolves `ollama` (default), `gemini`, or `openrouter` from env via Laravel Service Manager; domain logic only depends on the `ComplianceDriver` interface. |
+| **💾 Vector Layer** | `app/Services/VectorCacheService.php` · `app/Services/EmbeddingService.php` | **Semantic Cache + RAG:** Upstash Vector `transactions` namespace (cache, ≥ 0.90) + `policies` namespace (RAG, ≥ 0.70, domain-filtered); fingerprint embedding via Ollama `nomic-embed-text` (768-dim) or Gemini `embedding-001` (1536-dim), swappable via `SENTINEL_EMBEDDING_DRIVER`. |
 | **🔌 MCP** | `app/Mcp/Servers/SentinelServer.php` · `routes/ai.php` | **Agent Protocol:** Model Context Protocol endpoint at `POST /mcp`; exposes `analyze_transaction`, `search_policies`, and `get_recent_transactions` tools to AI agents (Claude Desktop, Cursor, etc.). |
 
 ### 📐 Scale & Fault Tolerance
@@ -246,10 +246,10 @@ sequenceDiagram
 
     S->>W: Fetch Transaction (XREADGROUP)
 
-    note over W,V: 2a. Semantic Cache Check (Namespace: default)
+    note over W,V: 2a. Semantic Cache Check (Namespace: transactions)
     W->>V: Search Similar Results
 
-    alt Pattern Similarity > 0.95
+    alt Pattern Similarity ≥ 0.90
         V-->>W: Return Cached Risk Report
         Note over W: Bypasses LLM (Fast Path)
     else Pattern New or Low Score
@@ -464,7 +464,7 @@ No dashboard change is needed once a driver call succeeds — the queries are al
 
 ### 🐛 Known issues
 
-* **Semantic cache can permanently amplify a single wrong verdict for narrow-profile merchants.** The Upstash Vector cache (similarity threshold 0.95) matches on embedding similarity, not transaction identity. A merchant profile whose transactions are narrow enough in amount range and message wording (e.g. the `suspicious`-category simulation profile) can embed near-identically across every transaction it generates — so if the *first* one is ever misanalyzed, every subsequent similar transaction inherits that one stale, wrong cached verdict indefinitely, rather than getting an independent re-analysis. Discovered during arbiter-l8's Phase 3 step 8 live judge validation (worked around there via the per-request driver override, which bypasses the cache entirely — see arbiter-l8's `docs/journal/arbiter-l8-2026-07-04T1720-ground-truth-export-and-judge-validation.md`). Not yet fixed here; no cache-invalidation or per-merchant TTL exists today.
+* **Semantic cache can permanently amplify a single wrong verdict for narrow-profile merchants.** The Upstash Vector cache (similarity threshold 0.90) matches on embedding similarity, not transaction identity. A merchant profile whose transactions are narrow enough in amount range and message wording (e.g. the `suspicious`-category simulation profile) can embed near-identically across every transaction it generates — so if the *first* one is ever misanalyzed, every subsequent similar transaction inherits that one stale, wrong cached verdict indefinitely, rather than getting an independent re-analysis. Discovered during arbiter-l8's Phase 3 step 8 live judge validation (worked around there via the per-request driver override, which bypasses the cache entirely — see arbiter-l8's `docs/journal/arbiter-l8-2026-07-04T1720-ground-truth-export-and-judge-validation.md`). Not yet fixed here; no cache-invalidation or per-merchant TTL exists today.
 
 ### 📦 Production-Ready Baseline
 

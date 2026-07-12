@@ -1,7 +1,7 @@
 # ADR 0016 — Synapse-L4 Axiom Ingestion
 
 **Date:** 2026-03-31
-**Status:** Accepted
+**Status:** Accepted (amended — the `sentinel:reclaim-axioms` reclaimer listed in Consequences was removed by ADR-0022, which replaced it with an embedded XAUTOCLAIM pass in each worker; `OpenRouterDriver` has since been fully implemented and the default driver is now `ollama`, see ADR-0027)
 
 ---
 
@@ -80,5 +80,5 @@ SENTINEL_AI_DRIVER=gemini
 - [x] `anomaly_score` threshold documented and added to `.env.example`
 - [x] `source_id` stored in `compliance_events` (Postgres) for audit trail
 - [x] Synapse-L4 `src/clients/sentinel.py` — implemented in the Synapse-L4 repo
-- [x] XCLAIM recovery for `synapse:axioms` consumer group — `sentinel:reclaim-axioms` command via `ReclaimAxioms.php`
-- [ ] OpenRouterDriver stub to be fully implemented when `SENTINEL_AI_DRIVER=openrouter` is needed
+- [x] XCLAIM recovery for `synapse:axioms` consumer group — `sentinel:reclaim-axioms` command via `ReclaimAxioms.php` *(since removed by ADR-0022 — recovery is now an embedded XAUTOCLAIM pass in each worker)*
+- [x] OpenRouterDriver fully implemented — now a concrete subclass of `AbstractComplianceDriver` (ADR-0027)
