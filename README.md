@@ -445,7 +445,7 @@ No dashboard change is needed once a driver call succeeds — the queries are al
 | [USER_STORIES.md](docs/USER_STORIES.md) | Compliance officer, platform engineer, AI agent | — |
 | [DEV_GETTING_STARTED.md](docs/DEV_GETTING_STARTED.md) | Full local setup walkthrough | — |
 | [journal.md](docs/journal.md) | Engineering journal — one entry per phase | — |
-| [adr/](docs/adr/) | Architecture Decision Records (ADR-0001 – ADR-0026) | — |
+| [adr/](docs/adr/) | Architecture Decision Records (ADR-0001 – ADR-0030) | — |
 
 
 ## 🗺️ Roadmap
@@ -461,6 +461,7 @@ No dashboard change is needed once a driver call succeeds — the queries are al
 * [ ] **Fingerprint field reconciliation (ADR-0002/ADR-0015)** — the transaction fingerprint now includes a randomly-templated `message` field, adding entropy that may suppress cache hits; revisit alongside the open amount-representation (ADR-0002) and similarity-threshold (ADR-0015) questions
 * [ ] **Ollama embedding threshold re-validation (ADR-0015/ADR-0025)** — cutover is live (`SENTINEL_EMBEDDING_DRIVER=ollama`, Upstash Vector index recreated at 768-dim, `sentinel:ingest` re-run against nomic-embed-text v1.5); still need to re-validate `UPSTASH_VECTOR_THRESHOLD` against nomic's score distribution before treating `ollama` as the production default
 * [ ] **Telemetry namespace** — add a third named Upstash Vector namespace (e.g. `telemetry`) following the pattern established in ADR-0026; no implicit/default namespace usage anywhere in the codebase
+* [ ] **`VertexAIDriver` implementation (ADR-0030, Accepted)** — fourth `ComplianceDriver`, service account + OAuth2 auth (`roles/aiplatform.user`) against Vertex AI's `generateContent` endpoint; needs the `google/auth` Composer dependency, new `services.vertexai.*` config, and `'vertexai'` added to `AnalyzeTransaction`'s MCP tool `DRIVERS` allowlist so it's reachable through arbiter-l8's per-request driver override, not just the `SENTINEL_AI_DRIVER` env default
 
 ### 🐛 Known issues
 
