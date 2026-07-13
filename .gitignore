@@ -19,6 +19,7 @@
 /public/storage
 /storage/*.key
 /storage/pail
+/storage/vertexai-credentials.json
 /vendor
 Homestead.json
 Homestead.yaml

@@ -50,10 +50,10 @@ When updating a prompt, create a new version file. The latest version is used au
 The active driver is set via env var:
 
 ```env
-SENTINEL_AI_DRIVER=ollama      # default (ADR-0027); or: gemini, openrouter
+SENTINEL_AI_DRIVER=ollama      # default (ADR-0027); or: gemini, openrouter, vertexai (ADR-0030)
 ```
 
-All three drivers extend `AbstractComplianceDriver` and implement `callModel(string $prompt): string`; prompt building, policy RAG, quality scoring, and response parsing are shared. The `ComplianceManager` (Service Manager pattern) resolves the correct driver at runtime. No code change required to switch backends.
+All four drivers extend `AbstractComplianceDriver` and implement `callModel(string $prompt): string`; prompt building, policy RAG, quality scoring, and response parsing are shared. The `ComplianceManager` (Service Manager pattern) resolves the correct driver at runtime. No code change required to switch backends.
 
 ## Gemini Response Format
 

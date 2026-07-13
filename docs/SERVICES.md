@@ -106,7 +106,7 @@ services.upstash_vector.similarity_threshold → UPSTASH_VECTOR_THRESHOLD (defau
 
 ### `searchNamespace(array $embedding, string $namespace, float $threshold, int $topK = 3): array`
 
-Queries a specific Upstash namespace with an explicit threshold. Returns all results above the threshold (not just the best match), each as `{id, score, metadata}`. Used by all three `ComplianceDriver` implementations (via `AbstractComplianceDriver::fetchPolicyContext()`) and the `SearchPolicies` MCP tool to query `ns:policies`.
+Queries a specific Upstash namespace with an explicit threshold. Returns all results above the threshold (not just the best match), each as `{id, score, metadata}`. Used by all four `ComplianceDriver` implementations (via `AbstractComplianceDriver::fetchPolicyContext()`) and the `SearchPolicies` MCP tool to query `ns:policies`.
 
 ```php
 $chunks = $vectorCache->searchNamespace($vector, 'policies', 0.70, 3);
@@ -152,7 +152,7 @@ $result = $driver->analyze($axiomData);
 sentinel.ai_driver → SENTINEL_AI_DRIVER (default: ollama, see ADR-0027)
 ```
 
-**Registered drivers:** `ollama` → `OllamaDriver` (default), `gemini` → `GeminiDriver`, `openrouter` → `OpenRouterDriver`
+**Registered drivers:** `ollama` → `OllamaDriver` (default), `gemini` → `GeminiDriver`, `openrouter` → `OpenRouterDriver`, `vertexai` → `VertexAIDriver`
 
 ---
 
@@ -161,7 +161,7 @@ sentinel.ai_driver → SENTINEL_AI_DRIVER (default: ollama, see ADR-0027)
 **File:** `app/Services/Compliance/AbstractComplianceDriver.php`  
 **Implements:** `App\Contracts\ComplianceDriver` (abstract)
 
-Shared base for all three `ComplianceDriver` implementations (ADR-0027). Owns everything except the actual outbound HTTP call:
+Shared base for all four `ComplianceDriver` implementations (ADR-0027). Owns everything except the actual outbound HTTP call:
 
 ```
 buildQueryText(data) / buildTransactionQueryText(data)   // translate Axiom/transaction fields → compliance question
@@ -208,6 +208,25 @@ services.ollama.chat_timeout → OLLAMA_CHAT_TIMEOUT (default: 60)
 ```
 services.gemini.api_key   → GEMINI_API_KEY
 services.gemini.flash_url → GEMINI_FLASH_URL
+```
+
+---
+
+## VertexAIDriver
+
+**File:** `app/Services/Compliance/VertexAIDriver.php`
+**Extends:** `AbstractComplianceDriver` · **See ADR-0030**
+
+`callModel()` posts to Claude Sonnet 4.6 via Vertex AI's Agent Platform (`publishers/anthropic/models/claude-sonnet-4-6:rawPredict`) — the Anthropic Messages API request/response shape, not Gemini's `generateContent` shape used elsewhere in this repo. Auth is a GCP service account + IAM role (`roles/aiplatform.user`), not a flat API key: `VertexAiTokenService` mints a per-request OAuth2 bearer token via the `google/auth` PHP library and is injected as a third constructor dependency (alongside the `EmbeddingService`/`VectorCacheService` seams `AbstractComplianceDriver` already provides), so tests can mock the token boundary instead of hitting Google's real OAuth2 endpoint. Every request explicitly sets `thinking: {"type": "disabled"}` and `output_config: {"effort": "low"}` — Sonnet 4.6 defaults to high-effort adaptive thinking, which adds unnecessary cost for this driver's short JSON-classification workload. No free tier; billed per-token at direct-API rates.
+
+**Config keys read:**
+```
+services.vertexai.project_id       → VERTEXAI_PROJECT_ID
+services.vertexai.region           → VERTEXAI_REGION (default: global — no regional pricing premium)
+services.vertexai.credentials_path → VERTEXAI_CREDENTIALS_PATH (default: storage/vertexai-credentials.json, gitignored)
+services.vertexai.model            → VERTEXAI_MODEL (default: claude-sonnet-4-6)
+services.vertexai.max_tokens       → VERTEXAI_MAX_TOKENS (default: 4096)
+services.vertexai.timeout          → VERTEXAI_TIMEOUT (default: 15)
 ```
 
 ---

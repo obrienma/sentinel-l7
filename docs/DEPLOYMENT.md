@@ -31,8 +31,13 @@ GEMINI_API_KEY=...
 GEMINI_MODEL=gemini-2.0-flash
 GEMINI_EMBEDDING_MODEL=gemini-embedding-001
 
-SENTINEL_AI_DRIVER=gemini  # default is ollama (ADR-0027) — override to gemini/openrouter here if the
+SENTINEL_AI_DRIVER=gemini  # default is ollama (ADR-0027) — override to gemini/openrouter/vertexai here if the
                            # deploy target can't reach the Tailscale Ollama host used in dev
+
+# Vertex AI (only if SENTINEL_AI_DRIVER=vertexai — Claude Sonnet 4.6 via GCP, ADR-0030, no free tier)
+VERTEXAI_PROJECT_ID=...
+VERTEXAI_REGION=global
+VERTEXAI_CREDENTIALS_PATH=...     # path to the service account JSON on the deploy target
 ```
 
 ## Deploy

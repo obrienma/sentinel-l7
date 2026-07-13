@@ -43,7 +43,7 @@ Stories are organised by domain. Each story is marked with a status icon and a u
 
 - ✅ 🛠️ **Compare AI providers on the same transaction for disagreement measurement**
   - *As a platform engineer, I want to force a specific AI driver on a given transaction and bypass the semantic cache entirely, so that I can score the same input through two different providers and measure where they disagree.*
-  - Delivered by: `TransactionProcessorService::process($data, driver: 'gemini'|'openrouter'|'ollama')` and the matching `analyze_transaction` MCP parameter — skips cache read/write and never falls back to Tier 3 on failure. Built for arbiter-l8's online disagreement layer.
+  - Delivered by: `TransactionProcessorService::process($data, driver: 'gemini'|'openrouter'|'ollama'|'vertexai')` and the matching `analyze_transaction` MCP parameter — skips cache read/write and never falls back to Tier 3 on failure. Built for arbiter-l8's online disagreement layer.
 
 - ✅ 🛠️ **Export labeled ground-truth transactions for offline model evaluation**
   - *As a platform engineer, I want a labeled sample of pre-AI transaction outcomes exported to a file, so that I can evaluate a compliance driver's judgments against known-correct labels outside the live pipeline.*
@@ -119,7 +119,7 @@ Stories are organised by domain. Each story is marked with a status icon and a u
 
 - ✅ 🛠️ **Swap AI backends without code changes**
   - *As a platform engineer, I want to change the AI provider via an environment variable, so that I can respond to quota exhaustion or cost changes without a deployment.*
-  - Delivered by: `ComplianceManager` (Laravel Service Manager); `SENTINEL_AI_DRIVER=ollama|gemini|openrouter` (`ollama` is the default, see ADR-0027)
+  - Delivered by: `ComplianceManager` (Laravel Service Manager); `SENTINEL_AI_DRIVER=ollama|gemini|openrouter|vertexai` (`ollama` is the default, see ADR-0027; `vertexai` see ADR-0030)
 
 - ✅ 🛠️ **Swap embedding providers without code changes**
   - *As a platform engineer, I want to change the embedding provider via an environment variable, so that I can move off a rate-limited or costly embedding API without touching pipeline code.*

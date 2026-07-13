@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Services\Compliance\GeminiDriver;
 use App\Services\Compliance\OllamaDriver;
 use App\Services\Compliance\OpenRouterDriver;
+use App\Services\Compliance\VertexAIDriver;
 use Illuminate\Support\Manager;
 
 class ComplianceManager extends Manager
@@ -27,5 +28,10 @@ class ComplianceManager extends Manager
     protected function createOllamaDriver(): OllamaDriver
     {
         return $this->container->make(OllamaDriver::class);
+    }
+
+    protected function createVertexaiDriver(): VertexAIDriver
+    {
+        return $this->container->make(VertexAIDriver::class);
     }
 }

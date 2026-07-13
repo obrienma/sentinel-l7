@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **Backend:** PHP 8.4, Laravel 12
 - **Frontend:** React 19, Inertia.js, shadcn/ui (New York style, slate base), Tailwind CSS v4
-- **AI:** Ollama `qwen3.5:9b-q4_K_M` (compliance analysis, default — ADR-0027; Gemini Flash/OpenRouter available via `SENTINEL_AI_DRIVER`), Ollama `nomic-embed-text` (embeddings, default — ADR-0025; 768-dim vectors)
+- **AI:** Ollama `qwen3.5:9b-q4_K_M` (compliance analysis, default — ADR-0027; Gemini Flash/OpenRouter/Claude Sonnet 4.6-via-Vertex AI available via `SENTINEL_AI_DRIVER`, see ADR-0030), Ollama `nomic-embed-text` (embeddings, default — ADR-0025; 768-dim vectors)
 - **Infrastructure:** Upstash Redis Streams + Upstash Vector, Neon PostgreSQL
 - **Deployment:** Railway
 
@@ -40,7 +40,7 @@ Both workers run an `XAUTOCLAIM` pass at the top of every loop iteration — rec
 1. Embed transaction fingerprint → active `EmbeddingDriver` (Gemini `embedding-001`, 1536-dim, or Ollama `nomic-embed-text`, 768-dim; swap via `SENTINEL_EMBEDDING_DRIVER`, see ADR-0025)
 2. Vector search (Upstash, ns:`transactions`, threshold ≥ 0.90 default — ADR-0015) → cache hit returns early. No implicit/default namespace is used anywhere (ADR-0026).
 3. Cache hit is validated against `sentinel_policy_epoch` — stale epoch triggers re-analysis
-4. Cache miss → active `ComplianceDriver` analysis with policy RAG (ns:`policies`, threshold ≥ 0.70, filtered by `domain` metadata when present) — Ollama `qwen3.5` by default, or Gemini Flash/OpenRouter via `SENTINEL_AI_DRIVER` (see ADR-0027)
+4. Cache miss → active `ComplianceDriver` analysis with policy RAG (ns:`policies`, threshold ≥ 0.70, filtered by `domain` metadata when present) — Ollama `qwen3.5` by default, or Gemini Flash/OpenRouter/Claude Sonnet 4.6-via-Vertex AI via `SENTINEL_AI_DRIVER` (see ADR-0027, ADR-0030)
 5. Upsert result into vector cache (ns:`transactions`) → XACK
 
 Tier 3 fallback: if embedding or vector search throws, `ThreatAnalysisService` runs locally (amount threshold, no AI). XACK always called.
@@ -69,7 +69,7 @@ Tier 3 fallback: if embedding or vector search throws, `ThreatAnalysisService` r
 | `app/Services/ThreatAnalysisService.php` | Tier 3 rule-based fallback |
 | `app/Services/AxiomProcessorService.php` | Axiom pipeline — threshold routing + ComplianceEvent persistence |
 | `app/Services/AxiomStreamService.php` | XREADGROUP/XAUTOCLAIM wrapper for `synapse:axioms` |
-| `app/Services/ComplianceManager.php` | Laravel Service Manager — resolves `ollama` (default), `gemini`, or `openrouter` driver |
+| `app/Services/ComplianceManager.php` | Laravel Service Manager — resolves `ollama` (default), `gemini`, `openrouter`, or `vertexai` driver |
 | `app/Services/Compliance/AbstractComplianceDriver.php` | Shared prompt building, policy RAG, quality scoring, response parsing (ADR-0027) |
 | `app/Contracts/ComplianceDriver.php` | Driver interface: `analyze(array $data): array` |
 | `app/Providers/AppServiceProvider.php` | Binds `ComplianceDriver` → `ComplianceManager::driver()` |
@@ -85,12 +85,13 @@ Tier 3 fallback: if embedding or vector search throws, `ThreatAnalysisService` r
 
 ## DI Wiring
 
-`AppServiceProvider` binds `ComplianceDriver::class` to the result of `ComplianceManager::driver()`, which reads `SENTINEL_AI_DRIVER` from env. `OllamaDriver`, `GeminiDriver`, and `OpenRouterDriver` all extend `AbstractComplianceDriver` and implement `ComplianceDriver`. Switch drivers without code changes:
+`AppServiceProvider` binds `ComplianceDriver::class` to the result of `ComplianceManager::driver()`, which reads `SENTINEL_AI_DRIVER` from env. `OllamaDriver`, `GeminiDriver`, `OpenRouterDriver`, and `VertexAIDriver` all extend `AbstractComplianceDriver` and implement `ComplianceDriver`. Switch drivers without code changes:
 
 ```env
 SENTINEL_AI_DRIVER=ollama      # default (ADR-0027)
 SENTINEL_AI_DRIVER=gemini      # alternative
 SENTINEL_AI_DRIVER=openrouter  # alternative
+SENTINEL_AI_DRIVER=vertexai    # alternative — Claude Sonnet 4.6 via Vertex AI (ADR-0030)
 ```
 
 ## Domain Logic Isolation

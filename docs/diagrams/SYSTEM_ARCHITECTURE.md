@@ -33,6 +33,7 @@ graph TB
             OLD[OllamaDriver]
             GD[GeminiDriver]
             OD[OpenRouterDriver]
+            VAD[VertexAIDriver]
         end
     end
 
@@ -46,6 +47,7 @@ graph TB
         GemEmbed["Gemini\nEmbedding API"]
         GemAI["Gemini Flash\nAI Analysis"]
         OllamaAI["Ollama qwen3.5\nAI Analysis (default)"]
+        VertexAI["Vertex AI\nClaude Sonnet 4.6"]
         UV["Upstash Vector\nns:default + ns:policies"]
         Redis["Upstash Redis\nStreams\ntransactions + synapse:axioms"]
         PG["Neon PostgreSQL\ncompliance_events"]
@@ -59,10 +61,11 @@ graph TB
 
     W --> CE
     CE --> CM
-    CM --> OLD & GD & OD
+    CM --> OLD & GD & OD & VAD
     OLD --> OllamaAI
     GD --> GemAI
     OD --> GemAI
+    VAD --> VertexAI
     CE --> ES --> GemEmbed
     CE --> VCS --> UV
     W --> Redis
@@ -74,6 +77,8 @@ graph TB
     OLD --> VCS
     GD --> ES
     GD --> VCS
+    VAD --> ES
+    VAD --> VCS
 
     classDef frontend fill:#0f172a,stroke:#3b82f6,color:#93c5fd
     classDef controller fill:#0f172a,stroke:#6366f1,color:#a5b4fc
@@ -83,8 +88,8 @@ graph TB
 
     class Home,Login,Dash frontend
     class HC,AC,DC,HIR,AM controller
-    class CE,CM,ES,VCS,OLD,GD,OD service
-    class GemEmbed,GemAI,OllamaAI,UV,Redis external
+    class CE,CM,ES,VCS,OLD,GD,OD,VAD service
+    class GemEmbed,GemAI,OllamaAI,VertexAI,UV,Redis external
     class W,R,WA worker
 ```
 
@@ -101,6 +106,7 @@ graph LR
     CM --> OLD[OllamaDriver]
     CM --> GD[GeminiDriver]
     CM --> OD[OpenRouterDriver]
+    CM --> VAD[VertexAIDriver]
 
     OLD --> OllamaAI((Ollama qwen3.5\ndefault))
     OLD --> ES
@@ -109,6 +115,9 @@ graph LR
     GD --> ES
     GD --> VCS
     OD --> GemAI
+    VAD --> VertexAI((Vertex AI\nClaude Sonnet 4.6))
+    VAD --> ES
+    VAD --> VCS
     ES --> GemEmbed((Gemini Embed))
     VCS --> UV((Upstash Vector\nns:default + ns:policies))
 

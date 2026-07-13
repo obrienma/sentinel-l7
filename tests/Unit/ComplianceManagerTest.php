@@ -4,6 +4,7 @@ use App\Contracts\ComplianceDriver;
 use App\Services\Compliance\GeminiDriver;
 use App\Services\Compliance\OllamaDriver;
 use App\Services\Compliance\OpenRouterDriver;
+use App\Services\Compliance\VertexAIDriver;
 use App\Services\ComplianceManager;
 
 uses(Tests\TestCase::class);
@@ -24,6 +25,12 @@ it('resolves OllamaDriver when ai_driver is ollama', function () {
     config(['sentinel.ai_driver' => 'ollama']);
 
     expect(app(ComplianceDriver::class))->toBeInstanceOf(OllamaDriver::class);
+});
+
+it('resolves VertexAIDriver when ai_driver is vertexai', function () {
+    config(['sentinel.ai_driver' => 'vertexai']);
+
+    expect(app(ComplianceDriver::class))->toBeInstanceOf(VertexAIDriver::class);
 });
 
 it('throws when ai_driver names an unregistered driver', function () {

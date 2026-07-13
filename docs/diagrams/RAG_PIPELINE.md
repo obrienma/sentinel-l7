@@ -1,6 +1,6 @@
 # RAG Pipeline
 
-> **Status: Live.** Policy ingestion (`sentinel:ingest`) and retrieval (`AbstractComplianceDriver`, shared by `OllamaDriver`/`GeminiDriver`/`OpenRouterDriver` — ADR-0027) are both implemented and wired end-to-end.
+> **Status: Live.** Policy ingestion (`sentinel:ingest`) and retrieval (`AbstractComplianceDriver`, shared by `OllamaDriver`/`GeminiDriver`/`OpenRouterDriver`/`VertexAIDriver` — ADR-0027, ADR-0030) are both implemented and wired end-to-end.
 
 ## What is RAG Here?
 
@@ -25,7 +25,7 @@ flowchart TD
         PolicySearch -->|empty| NoCtx["No context —\nproceed without RAG"]
 
         PolicyCtx & NoCtx --> Prompt["buildPrompt\nAxiom + policy chunks"]
-        Prompt --> Model["Active ComplianceDriver\n(Ollama default / Gemini / OpenRouter)\nformat: json"]
+        Prompt --> Model["Active ComplianceDriver\n(Ollama default / Gemini / OpenRouter / VertexAI)\nformat: json"]
         Model --> Result["{narrative, risk_level,\npolicy_refs, confidence}"]
         Result --> Persist["ComplianceEvent\nPostgres"]
     end

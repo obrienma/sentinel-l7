@@ -60,6 +60,20 @@ return [
         ),
     ],
 
+    'vertexai' => [
+        // Service account + IAM auth (roles/aiplatform.user), not a flat API
+        // key — see ADR-0030 for why this differs from services.gemini.
+        // Claude on Vertex AI (Agent Platform), not Gemini — publisher path
+        // is publishers/anthropic, not publishers/google. 'global' region
+        // carries no pricing premium (regional/multi-region add 10%).
+        'project_id' => env('VERTEXAI_PROJECT_ID'),
+        'region' => env('VERTEXAI_REGION', 'global'),
+        'credentials_path' => env('VERTEXAI_CREDENTIALS_PATH', storage_path('vertexai-credentials.json')),
+        'model' => env('VERTEXAI_MODEL', 'claude-sonnet-4-6'),
+        'max_tokens' => env('VERTEXAI_MAX_TOKENS', 4096),
+        'timeout' => env('VERTEXAI_TIMEOUT', 15),
+    ],
+
     'ollama' => [
         'url' => env('OLLAMA_URL', 'http://localhost:11434'),
         'embedding_model' => env('OLLAMA_EMBEDDING_MODEL', 'nomic-embed-text'),
