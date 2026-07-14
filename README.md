@@ -1,5 +1,5 @@
 <p align="center">
-  <img width="300" alt="Sentinel-L7" src="public/images/Sentinel-L7-logo.png" />
+  <img width="200" alt="Sentinel-L7" src="public/images/Sentinel-L7-logo.png" />
 </p>
 
 **Sentinel-L7** is a multi-process Laravel application built to explore production patterns for async message processing, semantic caching, and fault-tolerant distributed systems. It processes any scored event stream — financial events, medical access logs, SaaS API activity, raw system telemetry — and classifies each event against an indexed corpus of domain-specific policy documents to determine whether it exceeds a risk threshold. A compliance engine (AML, GDPR, HIPAA) is the domain used here; the architecture is domain-agnostic.
