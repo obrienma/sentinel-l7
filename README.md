@@ -1,8 +1,8 @@
 <p align="center">
-  <img width="300" alt="Sentinel-L7" src="public/images/sentinel-l7-shield.svg" />
+  <img width="300" alt="Sentinel-L7" src="public/images/Sentinel-L7-logo.png" />
 </p>
 
-<img src="public/images/sentinel-l7-name-lime.svg" alt="Sentinel-L7" height="25" valign="middle" /> is a multi-process Laravel application built to explore production patterns for async message processing, semantic caching, and fault-tolerant distributed systems. It processes any scored event stream — financial events, medical access logs, SaaS API activity, raw system telemetry — and classifies each event against an indexed corpus of domain-specific policy documents to determine whether it exceeds a risk threshold. A compliance engine (AML, GDPR, HIPAA) is the domain used here; the architecture is domain-agnostic.
+**Sentinel-L7** is a multi-process Laravel application built to explore production patterns for async message processing, semantic caching, and fault-tolerant distributed systems. It processes any scored event stream — financial events, medical access logs, SaaS API activity, raw system telemetry — and classifies each event against an indexed corpus of domain-specific policy documents to determine whether it exceeds a risk threshold. A compliance engine (AML, GDPR, HIPAA) is the domain used here; the architecture is domain-agnostic.
 
 The [Synapse-L4](https://github.com/obrienma/synapse-l4) sidecar handles the [EventHorizon](https://github.com/obrienma/EventHorizon) telemetry path: it validates raw events through an LLM judge pass and emits typed, scored Axioms into the pipeline. Policy context is retrieved at analysis time by semantic similarity from a vector knowledge base (Upstash Vector, `policies` namespace) and filtered by domain tag, so an AML analysis is never grounded in GDPR chunks and vice versa.
 
