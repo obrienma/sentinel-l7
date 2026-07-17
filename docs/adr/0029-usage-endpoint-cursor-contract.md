@@ -1,7 +1,7 @@
 # ADR-0029: `GET /usage` Endpoint — Cursor Contract for Ledger-L5
 
 **Date:** 2026-07-09
-**Status:** Accepted
+**Status:** Accepted (amended 2026-07-16 — ADR-0031 adds an optional `tenant` field to `compliance_events`, sourced verbatim from Xylem-L6's `tenant` field (Xylem-L6 ADR-0006) once that transmission wiring exists. Decision #2a's `compliance_events[]` row shape below is updated to include it — decision #4's "full column set, no projection" behaviour means it flows through this endpoint automatically, but the documented example needed updating to match.)
 
 ## Context
 
@@ -59,6 +59,7 @@ Both arrays ordered by `id ASC`. When an array is empty, its `next_cursor` entry
   "id": 6031,
   "source_id": "sensor-42",
   "domain": "aml",
+  "tenant": "acme-corp",
   "status": "warn",
   "metric_value": 812.4,
   "anomaly_score": 0.91,
@@ -69,7 +70,7 @@ Both arrays ordered by `id ASC`. When an array is empty, its `next_cursor` entry
   "created_at": "2026-07-09T21:40:55Z"
 }
 ```
-`driver_used` + `routed_to_ai` together are the ADR-0028 billing-classification signal: `routed_to_ai = false` means never attempted (no AI call, `driver_used` is `null`); `routed_to_ai = true` with a real driver name means a successful, billable call; `driver_used = 'fallback'` means attempted and thrown, excluded per ADR-0028. `source_id` is the Axiom pipeline's own idempotency key (ADR-0016-era dedup), analogous to `txn_id` above — not the cursor. `emitted_at` and `created_at` are not interchangeable: `emitted_at` is nullable business time (when Synapse-L4 emitted the Axiom), `created_at` is insertion time (when Sentinel-L7 persisted the row) — the safety-lag filter in decision #3 operates on `created_at` only. This distinction is also why a timestamp cursor doesn't map cleanly onto this table at all (see Alternatives).
+`driver_used` + `routed_to_ai` together are the ADR-0028 billing-classification signal: `routed_to_ai = false` means never attempted (no AI call, `driver_used` is `null`); `routed_to_ai = true` with a real driver name means a successful, billable call; `driver_used = 'fallback'` means attempted and thrown, excluded per ADR-0028. `source_id` is the Axiom pipeline's own idempotency key (ADR-0016-era dedup), analogous to `txn_id` above — not the cursor. `emitted_at` and `created_at` are not interchangeable: `emitted_at` is nullable business time (when Synapse-L4 emitted the Axiom), `created_at` is insertion time (when Sentinel-L7 persisted the row) — the safety-lag filter in decision #3 operates on `created_at` only. This distinction is also why a timestamp cursor doesn't map cleanly onto this table at all (see Alternatives). `tenant` (added per ADR-0031) is nullable, like `domain` — most rows predate the field or come from an adapter with no tenant concept, and it carries no billing-classification meaning of its own; it's a passthrough correlation label for Ledger-L5, not a filter condition on this endpoint.
 
 `updated_at` is omitted from both — neither model is ever updated in place (`transactions` rows are insert-only per Phase 19's `firstOrCreate`; `compliance_events` rows are insert-only per its own dedup pattern), so `updated_at` is always identical to `created_at` and carries no information `created_at` doesn't already have.
 
