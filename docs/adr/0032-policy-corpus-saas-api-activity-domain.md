@@ -1,7 +1,7 @@
 # ADR-0032: Policy Corpus for SaaS API Activity Domain
 
 **Date:** 2026-07-16
-**Status:** Proposed — decision shape drafted, corpus content and single-tag vs. OR-filter choice open
+**Status:** Accepted (corpus content and single-tag-vs-OR-filter choice, both originally left open below, are now settled — see Decision. Still blocked on `WatchAxioms`/the Synapse-L4 emitter stamping `domain` on real SaaS-sourced Axiom payloads before the filter activates outside tests — tracked in README's Planned list, not a gate on this ADR's Accepted status per this repo's own precedent, e.g. ADR-0004/ADR-0029.)
 
 ## Context
 
@@ -11,30 +11,30 @@ ADR-0018 established the existing mechanism this would extend: policy files are 
 
 ## Decision — what's settled
 
-**Extend the existing single-tag mechanism rather than introducing a parallel one.** ADR-0018's filename convention and server-side filter already generalize to a new domain without code changes ("Adding a new compliance domain requires no code change — drop a `{domain}-*.md` file in `policies/` and run `sentinel:ingest`"). A new `saas`-domain policy file (e.g. `saas-api-security.md`) fits this pattern directly.
+**Extend the existing single-tag mechanism rather than introducing a parallel one.** ADR-0018's filename convention and server-side filter already generalize to a new domain without code changes ("Adding a new compliance domain requires no code change — drop a `{domain}-*.md` file in `policies/` and run `sentinel:ingest`"). New `saas`-domain policy files fit this pattern directly — see the three added below.
 
 **The Axiom *producer* side — `WatchAxioms` or the Synapse-L4 emitter — needs to stamp `domain` for SaaS-sourced events**, not `AxiomProcessorService`, which already consumes and forwards it correctly. This closes the actual remaining half of the gap ADR-0018 named as a known follow-up (and that CLAUDE.md's TODO list already tracks), not a new decision.
 
-## Decision — what's open
+**Which actual documents populate the corpus is settled: three files, one shared `saas` tag.** `policies/saas-mitre-attack-alignment.md` (SAAS-MITRE-001), `policies/saas-nist-authentication-alignment.md` (SAAS-NIST-001), and `policies/saas-owasp-api-security-alignment.md` (SAAS-OWASP-001) are all in the corpus, filenamed per ADR-0018's `{domain}-{rest}.md` convention — so `sentinel:ingest` tags every chunk from all three `domain = 'saas'`, a single shared tag, not an OR-filter across `mitre`/`nist`/`owasp`.
 
-**Whether SaaS API activity is better served by one shared `saas` tag or an OR-filter across more granular tags** (e.g. `owasp`, `nist`, `soc2`) if the eventual corpus draws from more than one framework and a given event could plausibly implicate more than one. `VectorCacheService::searchNamespace()` already accepts an arbitrary filter string and needs no change either way — it just forwards whatever it's given into the Upstash query payload. The actual single-value constraint lives one layer up, in `AbstractComplianceDriver::fetchPolicyContext()`, which today builds the filter as `"domain = '{$domain}'"` from a single `$data['domain']` value. An OR-filter (`domain = 'owasp' OR domain = 'nist'`) is a small, mechanical extension there — and to the `$data['domain']`-vs-`$data['domains']` shape feeding it — not a redesign, but only worth building if the corpus content actually calls for it.
+**Single shared tag over OR-filter, because the three documents are complementary lenses on the same signals, not disjoint frameworks.** ADR-0018's OR-filter option was designed for the case where an event is one domain *or* another (an event is an AML question or a GDPR question, not both). That's not this corpus's shape: credential-stuffing maps to both OWASP §2 and MITRE T1110.004; scope-escalation maps to both OWASP §3 and MITRE T1548; first-seen-origin/impossible-travel maps to both NIST §2–3 and MITRE T1078. A single event legitimately wants grounding from more than one of these documents at once, so top-k similarity search over one shared `saas` tag is the correct retrieval shape here, not a simplification made only for lack of an OR-filter. `VectorCacheService::searchNamespace()` already accepts an arbitrary filter string and needs no change either way; `AbstractComplianceDriver::fetchPolicyContext()`'s single-value `"domain = '{$domain}'"` filter also needs no change, since no multi-value case exists to feed it.
 
-**Which actual documents populate the corpus** is not decided here and isn't a call this ADR should make unilaterally — it's a content decision, not an architectural one. Recorded as open pending that input, consistent with ADR-0018's own filename-convention contract once chosen.
+**The escape hatch, if a future SaaS-adjacent document turns out to be genuinely disjoint from these three** (e.g. a data-residency policy unrelated to credential-stuffing/scope-escalation/impossible-travel): give it its own domain tag via a new filename prefix (e.g. `saasgdpr-*.md`), rather than folding it into `saas` or building OR-filter support. ADR-0018 already makes this free — "adding a new domain requires no code change." This defers the actual judgment call (is new content complementary to `saas` or disjoint from it?) to whoever adds that content, rather than resolving it speculatively now.
 
 ## Rationale
 
-Reusing ADR-0018's mechanism rather than inventing a new one keeps one retrieval-filtering pattern in the codebase instead of two competing ones for the same underlying problem. Deferring the OR-filter question until the corpus content is known avoids building a filtering capability (multi-value OR) against a guessed-at need — consistent with "wait until it hurts."
+Reusing ADR-0018's mechanism rather than inventing a new one keeps one retrieval-filtering pattern in the codebase instead of two competing ones for the same underlying problem. A single `saas` tag is the right shape for this specific corpus, not just the simpler one — see Decision. Deferring the OR-filter question indefinitely (rather than building it speculatively) stays consistent with "wait until it hurts": if genuinely disjoint SaaS content shows up later, ADR-0018's existing per-file domain convention already provides the split point, at zero new code, so there was never a need to build OR-filter support against a guessed-at future need.
 
 ## Alternatives Considered
 
 | Option | Pro | Con |
 |---|---|---|
-| Single shared `saas` tag regardless of corpus breadth | Simplest; no filter changes needed | If the corpus later spans genuinely distinct frameworks (OWASP API Top 10 vs. SOC 2), collapses them into one retrieval scope, risking the same cross-domain contamination ADR-0018 was written to prevent |
-| Build OR-filter support now, before corpus exists | Ready for either outcome | Speculative — building filter logic against content that doesn't exist yet |
+| **Single shared `saas` tag (chosen)** | Matches the corpus's actual shape — MITRE/NIST/OWASP are complementary lenses on the same signals, not disjoint frameworks; no filter changes needed | If a future SaaS-adjacent document turns out to be genuinely disjoint, folding it into `saas` too would collapse it into the same retrieval scope, risking the cross-domain contamination ADR-0018 was written to prevent — mitigated by the escape hatch in Decision (give disjoint content its own domain tag instead) |
+| Build OR-filter support now, before corpus exists | Ready for either outcome | Speculative — building filter logic against content that doesn't exist yet; also solves the wrong problem for this corpus, since the three documents want *combined* retrieval, not a choice between them |
 | Frontmatter-based domain tagging (revisit ADR-0018's rejected alternative) | More robust than filename convention | ADR-0018 already declined this at current corpus size; nothing about the SaaS domain changes that calculus |
 
 ## Consequences
 
-- Blocks on a content decision (which documents) before `sentinel:ingest` can run against a real SaaS corpus.
-- `WatchAxioms`/the Synapse-L4 emitter gains a `domain` stamp for SaaS-sourced Axioms — a small, scoped change on the producer side, not the full Xylem-L6 wiring (which remains separately not-yet-authorized per Xylem-L6 ADR-0004). `AxiomProcessorService` itself needs no change — it already reads, persists, and forwards `domain` when present.
-- The single-tag-vs-OR-filter question stays open until corpus content answers it; this ADR should be revisited (not silently resolved) once that content exists.
+- The `saas` corpus (three files: SAAS-MITRE-001, SAAS-NIST-001, SAAS-OWASP-001) exists and is ready for `sentinel:ingest`, but the filter it feeds doesn't activate against real traffic until the producer-side gap below closes.
+- `WatchAxioms`/the Synapse-L4 emitter still needs a `domain` stamp for SaaS-sourced Axioms — a small, scoped change on the producer side, not the full Xylem-L6 wiring (which remains separately not-yet-authorized per Xylem-L6 ADR-0004). `AxiomProcessorService` itself needs no change — it already reads, persists, and forwards `domain` when present. Tracked in README's Planned list.
+- Single-tag-vs-OR-filter is resolved as single-tag, not open — see Decision and Alternatives. Revisit only if a future SaaS-adjacent document is genuinely disjoint from the current three; the response then is a new domain tag (per ADR-0018's existing convention), not retrofitting an OR-filter onto this one.
