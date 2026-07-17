@@ -445,7 +445,7 @@ No dashboard change is needed once a driver call succeeds — the queries are al
 | [USER_STORIES.md](docs/USER_STORIES.md) | Compliance officer, platform engineer, AI agent | — |
 | [DEV_GETTING_STARTED.md](docs/DEV_GETTING_STARTED.md) | Full local setup walkthrough | — |
 | [journal.md](docs/journal.md) | Engineering journal — one entry per phase | — |
-| [adr/](docs/adr/) | Architecture Decision Records (ADR-0001 – ADR-0030) | — |
+| [adr/](docs/adr/) | Architecture Decision Records (ADR-0001 – ADR-0032; ADR-0031 reserved, not yet written) | — |
 
 
 ## 🗺️ Roadmap
@@ -462,6 +462,7 @@ No dashboard change is needed once a driver call succeeds — the queries are al
 * [ ] **Ollama embedding threshold re-validation (ADR-0015/ADR-0025)** — cutover is live (`SENTINEL_EMBEDDING_DRIVER=ollama`, Upstash Vector index recreated at 768-dim, `sentinel:ingest` re-run against nomic-embed-text v1.5); still need to re-validate `UPSTASH_VECTOR_THRESHOLD` against nomic's score distribution before treating `ollama` as the production default
 * [ ] **Telemetry namespace** — add a third named Upstash Vector namespace (e.g. `telemetry`) following the pattern established in ADR-0026; no implicit/default namespace usage anywhere in the codebase
 * [ ] **Tenant label passthrough on `compliance_events` (ADR-0031, Proposed — not yet written to `docs/adr/`)** — optional `tenant` column, sourced verbatim from Xylem-L6's `tenant` field (Xylem-L6 ADR-0006) once its Sentinel-L7 transmission wiring exists; gives Ledger-L5 a correlation key to join `rate_cards.customer_id` against (Ledger-L5 ADR-0005). Narrow passthrough only — no auth/isolation changes, does not reopen ADR-0020. `GET /usage`'s documented `compliance_events[]` shape (ADR-0029) already amended to include it ahead of the column existing; blocked on Xylem-L6 ADR-0006 and the transmission wiring landing first
+* [ ] **Policy corpus for SaaS API activity domain (ADR-0032, Proposed)** — extends ADR-0018's existing single-tag domain filter with a `saas`-domain policy file rather than a new mechanism; corpus content and single-tag-vs-OR-filter choice still open. Prerequisite named by Xylem-L6 ADR-0004. Two things need to land first: which policy documents actually populate the corpus (content decision, not architectural), and `WatchAxioms`/the Synapse-L4 emitter stamping `domain` on SaaS-sourced Axiom payloads (`AxiomProcessorService` itself already reads/persists/forwards `domain` when present — this is the CLAUDE.md-tracked "domain activation" gap, one level upstream of that)
 
 ### 🐛 Known issues
 
