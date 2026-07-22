@@ -13,32 +13,56 @@ The [Synapse-L4](https://github.com/obrienma/synapse-l4) sidecar handles the [Ev
 ```mermaid
 %%{init: {'themeVariables': {'fontSize': '10px'}, 'flowchart': {'nodeSpacing': 15, 'rankSpacing': 25}}}%%
 flowchart LR
+    EH[EventHorizon]
+    XY[Xylem-L6]
+
     subgraph Ingestion
         A[Events<br/>XADD]
         SL[synapse-l4]
     end
-    subgraph Processing
-        B[Worker Pool<br/>PHP]
+
+    subgraph SentinelL7["sentinel-l7"]
+        subgraph Processing
+            B[Worker Pool<br/>PHP]
+        end
+        subgraph Intelligence
+            C[Gemini Flash<br/>+ Policy RAG]
+        end
+        subgraph Interface
+            E[React<br/>Dashboard]
+        end
+        subgraph Persistence
+            D[(Neon<br/>Postgres)]
+        end
     end
-    subgraph Intelligence
-        C[Gemini Flash<br/>+ Policy RAG]
+
+    subgraph "Downstream Consumers"
+        AR[arbiter-L8]
+        LE[Ledger-L5]
+        RL[Rhizome-Lens]
     end
-    subgraph Persistence
-        D[(Neon<br/>Postgres)]
-    end
-    subgraph Observation
-        E[React<br/>Dashboard]
-    end
+
+    EH -->|Telemetry Events| SL
+    XY -->|SaaS Activity| SL
     A --> B
     SL --> B
     B --> C
     B --> D
     D --> E
+    D --> LE
+    SL --> AR
+    SentinelL7 --> AR
+    SentinelL7 --> RL
 
+    click EH "https://github.com/obrienma/EventHorizon#readme" "Go to EventHorizon repo"
+    click XY "https://github.com/obrienma/Xylem-L6#readme" "Go to Xylem-L6 repo"
     click SL "https://github.com/obrienma/synapse-l4#readme" "Go to synapse-l4 repo"
+    click AR "https://github.com/obrienma/Arbiter-L8#readme" "Go to arbiter-L8 repo"
+    click LE "https://github.com/obrienma/Ledger-L5#readme" "Go to Ledger-L5 repo"
+    click RL "https://github.com/obrienma/Rhizome-Lens#readme" "Go to Rhizome-Lens repo"
 
     classDef clickable fill:#1d4ed8,stroke:#1e40af,stroke-width:2px,color:#ffffff
-    class SL clickable
+    class EH,XY,SL,AR,LE,RL clickable
 ```
 
 ---
@@ -166,46 +190,65 @@ open http://localhost:8000/dashboard
 ### 🔀 Pipeline Diagram
 
 ```mermaid
-graph TB
-    subgraph "1. Entry & Identity"
-        T1[Finance Event]
-        T2[Medical Access]
-        T3[SaaS API Request]
-        SL4[Synapse-L4 Sidecar]
-        IdP[OAuth 2.0 / OIDC Provider]
+%%{init: {'themeVariables': {'fontSize': '10px'}, 'flowchart': {'nodeSpacing': 15, 'rankSpacing': 25}}}%%
+flowchart LR
+    EH[EventHorizon]
+    XY[Xylem-L6]
+    AR[arbiter-L8<br/>external eval harness]
+
+    EH ~~~ AR
+
+    subgraph Ingestion
+        A[Events<br/>XADD]
+        SL[synapse-l4]
     end
 
-    subgraph "2. Infrastructure (Railway)"
-        Web[Web Dashboard - Inertia/React]
-        Worker[Sentinel Consumer - PHP]
-        AxiomWorker[Axiom Consumer - PHP]
+    subgraph SentinelL7["sentinel-l7"]
+        subgraph Processing
+            B[Worker Pool<br/>PHP]
+        end
+        subgraph Intelligence
+            CACHE[Semantic Cache]
+            LLM[Ollama LLM + RAG<br/>pluggable drivers]
+            FALLBACK[Rule-based Fallback]
+        end
+        subgraph Interface
+            E[React<br/>Dashboard]
+        end
+        subgraph Persistence
+            D[(Neon<br/>Postgres)]
+        end
     end
 
-    subgraph "3. Data & Memory (Upstash)"
-        Stream[(Redis Stream\ntransactions)]
-        AxiomStream[(Redis Stream\nsynapse:axioms)]
-        VectorCache[(Vector: Namespace Default)]
-        VectorRules[(Vector: Namespace Policies)]
+    subgraph "Downstream Consumers"
+        LE[Ledger-L5]
+        RL[Rhizome-Lens]
     end
 
-    subgraph "4. Persistence (Neon)"
-        PG[(PostgreSQL\ncompliance_events)]
-    end
+    EH -->|Telemetry Events| SL
+    XY -->|SaaS Activity| SL
+    A -->|Redis Stream| B
+    SL -->|Validated Events| B
+    B -->|Evaluation Request| CACHE
+    CACHE -->|Cache Miss| LLM
+    LLM -->|Low Confidence| FALLBACK
+    B -->|Persist Results| D
+    D -->|Query| E
+    D -->|Usage Events| LE
+    SentinelL7 -->|OTel Traces/Logs| RL
+    AR -->|HTTP POST /ingest| SL
+    AR -->|MCP: analyze-transaction<br/>driver override| B
+    AR -->|OTel Metrics/Traces| RL
 
-    Web <-->|OIDC Auth| IdP
-    T1 & T2 & T3 -->|XADD| Stream
-    SL4 -->|XADD Axioms| AxiomStream
-    Stream -.->|XREADGROUP + XAUTOCLAIM| Worker
-    AxiomStream -.->|XREADGROUP + XAUTOCLAIM| AxiomWorker
-    Worker -->|2a. Search Cache| VectorCache
-    Worker -->|2b. Fetch Policies| VectorRules
-    Worker -->|3. Reasoning| AI[Gemini Flash]
-    Worker -.->|Real-time Feed| Web
-    Worker -->|Update Cache| VectorCache
-    AxiomWorker -->|score > 0.8: Fetch Policies| VectorRules
-    AxiomWorker -->|score > 0.8: Audit Narrative| AI
-    AxiomWorker -->|Persist Every Axiom| PG
-    Web -->|Query Events| PG
+    click EH "https://github.com/obrienma/EventHorizon#readme" "Go to EventHorizon repo"
+    click XY "https://github.com/obrienma/Xylem-L6#readme" "Go to Xylem-L6 repo"
+    click SL "https://github.com/obrienma/synapse-l4#readme" "Go to synapse-l4 repo"
+    click AR "https://github.com/obrienma/Arbiter-L8#readme" "Go to arbiter-L8 repo"
+    click LE "https://github.com/obrienma/Ledger-L5#readme" "Go to Ledger-L5 repo"
+    click RL "https://github.com/obrienma/Rhizome-Lens#readme" "Go to Rhizome-Lens repo"
+
+    classDef clickable fill:#1d4ed8,stroke:#1e40af,stroke-width:2px,color:#ffffff
+    class EH,XY,SL,AR,LE,RL clickable
 ```
 
 ### 🗂️ Processing Layers
