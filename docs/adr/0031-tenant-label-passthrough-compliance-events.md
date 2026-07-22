@@ -1,7 +1,7 @@
 # ADR-0031: Tenant Label Passthrough on `compliance_events`
 
 **Date:** 2026-07-16
-**Status:** Proposed — field name and shape confirmed via ADR-0029's amendment; blocked on the `tenant` field actually reaching Synapse-L4's `POST /ingest` payload and its `RawTelemetry` model (Xylem-L6 ADR-0008 addendum + a new Synapse-L4 ADR, neither written yet)
+**Status:** Proposed — redesigned 2026-07-18 to source `tenant` from Synapse-L4's resolved producer identity rather than a self-reported payload field; blocked on Synapse-L4 ADR-0009 (rewritten) landing first
 
 ## Context
 
@@ -18,11 +18,15 @@ What Ledger-L5 needs is not tenant *isolation* — no access-control boundary, n
 
 This applies only to the async/Axiom pipeline (`compliance_events`), which is what the Xylem-L6-via-Synapse-L4 integration populates. The sync `transactions` pipeline (financial events, unrelated source) is out of scope here.
 
-**Confirmed current gap, checked directly against code:** `tenant` does not exist anywhere in Synapse-L4 today — not in `RawTelemetry` (`src/models/axiom.py`), not in `src/api/ingest.py`. Xylem-L6's `POST /ingest` payload (ADR-0008) doesn't send it either. This ADR's Decision below is therefore not actionable until two separate, not-yet-written changes land: an addendum to Xylem-L6 ADR-0008 adding `tenant` to the request body, and a new Synapse-L4 ADR adding the field to `RawTelemetry` and its extraction path.
+**Confirmed current gap, checked directly against code:** `tenant` does not exist anywhere in Synapse-L4 today — not in `RawTelemetry` (`src/models/axiom.py`), not in `src/api/ingest.py`. Xylem-L6's `POST /ingest` payload (ADR-0008) doesn't send it either. This ADR's Decision below is therefore not actionable until Synapse-L4 ADR-0009 (rewritten to resolve tenant from authenticated producer identity rather than trust a self-reported field) lands.
+
+**Why this ADR changed shape:** the original design (Sentinel-L7 ADR-0031 draft, Xylem-L6 ADR-0008 addendum) had Xylem-L6 self-report its own `tenant` value in the request body. That's fine for a system Xylem-L6 controls end-to-end in a demo, but EventHorizon and Xylem-L6 are customer-owned in the real-world framing this project is targeting — a self-reported field in a payload the producer controls is spoofable by construction, which is a real integrity gap specifically for a system whose job is compliance evaluation. The fix moves tenant resolution to the boundary where producers authenticate, not the payload they send.
 
 ## Decision
 
-Add a nullable `tenant` column to `compliance_events`, populated verbatim from the `tenant` value on the originating `POST /ingest` request once Xylem-L6's sink and Synapse-L4's `RawTelemetry` model both carry it end-to-end. No new auth mechanism, no query-scoping changes to existing reads, no isolation boundary. `AxiomProcessorService` needs the same one-line treatment it already gives `domain` — read `$data['tenant'] ?? null` and persist it — since it already reads, persists, and forwards optional fields of this shape.
+Add a nullable `tenant` column to `compliance_events`, populated from the **tenant identity Synapse-L4 resolves from the authenticated producer connection** — not from a self-reported field in the event payload. This is a deliberate change from this ADR's earlier draft, made once it became clear that EventHorizon and Xylem-L6 are customer-owned systems: a payload-embedded `tenant` string is self-reported and spoofable by whichever producer sends it, which is a real integrity gap for a compliance-evaluation system specifically. Synapse-L4 ADR-0009 (rewritten) covers the resolution mechanism; this ADR only covers what Sentinel-L7 does with the resolved value once it arrives.
+
+`AxiomProcessorService` needs the same one-line treatment it already gives `domain` — read `$data['tenant'] ?? null` and persist it — since it already reads, persists, and forwards optional fields of this shape. What changes is only the trustworthiness of the value arriving in that field, not how Sentinel-L7 handles it once it's there.
 
 `GET /usage`'s `compliance_events[]` row already documents this field (ADR-0029, amended 2026-07-16) — this ADR is what makes that documentation accurate rather than aspirational.
 
