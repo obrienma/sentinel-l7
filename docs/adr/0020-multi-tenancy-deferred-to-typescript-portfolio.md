@@ -1,7 +1,7 @@
 # ADR-0020: Multi-Tenancy and RBAC Deferred — Not Implemented in Sentinel-L7
 
 **Date:** 2026-05-07
-**Status:** Accepted
+**Status:** Superseded by [ADR-0033](0033-workos-authkit-multi-tenant-auth.md)
 
 ## Context
 
