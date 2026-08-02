@@ -21,7 +21,7 @@ function openRouterAxiom(array $overrides = []): array
     ], $overrides);
 }
 
-function mockOpenRouterDriver(array $responseBody): OpenRouterDriver
+function mockOpenRouterDriver(array $responseBody, array $policyChunks = []): OpenRouterDriver
 {
     Http::fake(['https://openrouter.ai/*' => Http::response($responseBody, 200)]);
 
@@ -29,7 +29,7 @@ function mockOpenRouterDriver(array $responseBody): OpenRouterDriver
     $embedding->shouldReceive('embed')->andReturn(array_fill(0, 1536, 0.1));
 
     $vectorCache = Mockery::mock(VectorCacheService::class);
-    $vectorCache->shouldReceive('searchNamespace')->andReturn([]);
+    $vectorCache->shouldReceive('searchNamespace')->andReturn($policyChunks);
 
     return new OpenRouterDriver($embedding, $vectorCache);
 }
@@ -50,7 +50,8 @@ it('returns a parsed narrative from a well-formed OpenRouter response', function
         ]],
     ];
 
-    $result = mockOpenRouterDriver($payload)->analyze(openRouterAxiom());
+    $result = mockOpenRouterDriver($payload, [['id' => 'p1', 'score' => 0.9, 'metadata' => []]])
+        ->analyze(openRouterAxiom());
 
     expect($result['narrative'])->toBe('Critical anomaly detected.')
         ->and($result['risk_level'])->toBe('critical')
@@ -270,7 +271,9 @@ it('logs quality score 4 and no warning for a high-quality response', function (
     $embedding = Mockery::mock(EmbeddingService::class);
     $embedding->shouldReceive('embed')->andReturn(array_fill(0, 1536, 0.1));
     $vectorCache = Mockery::mock(VectorCacheService::class);
-    $vectorCache->shouldReceive('searchNamespace')->andReturn([]);
+    $vectorCache->shouldReceive('searchNamespace')->andReturn([
+        ['id' => 'p1', 'score' => 0.85, 'metadata' => []],
+    ]);
 
     Log::shouldReceive('info')->once()->with('OpenRouterDriver: policy RAG retrieval', Mockery::type('array'));
     Log::shouldReceive('info')
@@ -407,7 +410,7 @@ it('OpenRouter: fires under-indexed warning when domain is set and fewer than 2 
 
 it('OpenRouter: logs null mean_score and does not fire under-indexed warning when no domain is set', function () {
     Http::fake(['https://openrouter.ai/*' => Http::response(
-        openRouterResponse(['narrative' => str_repeat('Regulatory analysis. ', 8), 'risk_level' => 'high', 'policy_refs' => ['P1'], 'confidence' => 0.9]),
+        openRouterResponse(['narrative' => str_repeat('Regulatory analysis. ', 8), 'risk_level' => 'high', 'policy_refs' => [], 'confidence' => 0.9]),
         200
     )]);
 

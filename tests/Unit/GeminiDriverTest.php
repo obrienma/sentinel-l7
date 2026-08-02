@@ -253,7 +253,9 @@ it('logs quality score 4 and no warning for a high-quality response', function (
     $embedding = Mockery::mock(EmbeddingService::class);
     $embedding->shouldReceive('embed')->andReturn(array_fill(0, 1536, 0.1));
     $vectorCache = Mockery::mock(VectorCacheService::class);
-    $vectorCache->shouldReceive('searchNamespace')->andReturn([]);
+    $vectorCache->shouldReceive('searchNamespace')->andReturn([
+        ['id' => 'p1', 'score' => 0.85, 'metadata' => []],
+    ]);
 
     Log::shouldReceive('info')->once()->with('GeminiDriver: policy RAG retrieval', Mockery::type('array'));
     Log::shouldReceive('info')
@@ -424,7 +426,7 @@ it('logs mean_score and does not flag under_indexed when domain filter returns 2
 
 it('logs null mean_score and does not fire under-indexed warning when no domain is set', function () {
     Http::fake(['https://generativelanguage.googleapis.com/*' => Http::response(
-        geminiResponse(['narrative' => str_repeat('Regulatory analysis. ', 8), 'risk_level' => 'high', 'policy_refs' => ['P1'], 'confidence' => 0.9]),
+        geminiResponse(['narrative' => str_repeat('Regulatory analysis. ', 8), 'risk_level' => 'high', 'policy_refs' => [], 'confidence' => 0.9]),
         200
     )]);
 

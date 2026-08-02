@@ -29,6 +29,7 @@ abstract class AbstractComplianceDriver implements ComplianceDriver
         $prompt = $this->buildPrompt($data, $policyChunks);
         $raw = $this->callModel($prompt);
         $result = $this->parseResponse($raw);
+        $result = $this->guardPolicyRefsAgainstEmptyRetrieval($result, $policyChunks, $data);
         $this->logResponseQuality($result, $data);
 
         return $result;
@@ -41,7 +42,28 @@ abstract class AbstractComplianceDriver implements ComplianceDriver
         $prompt = $this->buildTransactionPrompt($data, $policyChunks);
         $raw = $this->callModel($prompt);
         $result = $this->parseResponse($raw);
+        $result = $this->guardPolicyRefsAgainstEmptyRetrieval($result, $policyChunks, $data);
         $this->logResponseQuality($result, $data);
+
+        return $result;
+    }
+
+    /**
+     * ADR-0034: `chunk_count === 0` means no policy chunk cleared the retrieval
+     * threshold, so any non-empty `policy_refs` the model returned is fabricated
+     * — the model does not reliably honor "no context retrieved" prompt wording.
+     */
+    private function guardPolicyRefsAgainstEmptyRetrieval(array $result, array $policyChunks, array $data): array
+    {
+        if (count($policyChunks) === 0 && ! empty($result['policy_refs'])) {
+            Log::warning(class_basename(static::class).': policy_refs fabricated on empty retrieval', [
+                'source_id' => $data['source_id'] ?? null,
+                'domain' => $data['domain'] ?? null,
+                'model_asserted_refs' => $result['policy_refs'],
+            ]);
+
+            $result['policy_refs'] = [];
+        }
 
         return $result;
     }

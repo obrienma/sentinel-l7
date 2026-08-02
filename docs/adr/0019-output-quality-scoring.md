@@ -1,7 +1,7 @@
 # ADR 0019 — Output Quality Scoring on Compliance Driver Responses
 
 **Date:** 2026-05-02
-**Status:** Accepted (amended 2026-07-04 — the per-driver `logResponseQuality()` implementation described below was hoisted into `AbstractComplianceDriver` by ADR-0027; the rubric, thresholds, and log output are unchanged)
+**Status:** Accepted (amended 2026-07-04 — the per-driver `logResponseQuality()` implementation described below was hoisted into `AbstractComplianceDriver` by ADR-0027; the rubric, thresholds, and log output are unchanged) (amended 2026-08-01 — ADR-0034 added a `chunk_count > 0` requirement to the `has_policy_refs` signal; see rubric table)
 
 ---
 
@@ -27,10 +27,12 @@ Score every compliance driver response against a four-signal quality rubric befo
 
 | Signal | Check | Log key |
 |--------|-------|---------|
-| Policy citation | `policy_refs` is non-empty | `has_policy_refs` |
+| Policy citation | `policy_refs` is non-empty **and** the retrieval that produced this response had `chunk_count > 0` (ADR-0034) | `has_policy_refs` |
 | Risk level resolved | `risk_level` ≠ `'unknown'` | `has_risk_level` |
 | Narrative substance | `strlen(narrative)` ≥ 150 chars | `above_length_min` |
 | Driver confidence | `confidence` ≥ 0.6 | `above_confidence` |
+
+The `chunk_count > 0` half of the policy citation check is not evaluated directly inside `logResponseQuality()` — ADR-0034's `guardPolicyRefsAgainstEmptyRetrieval()` runs first and forces `policy_refs = []` whenever `chunk_count === 0`, so `has_policy_refs` inherits the correct value automatically. This table states the real check the signal represents, not just the line of code that happens to compute it.
 
 `quality_score` = sum of passing signals (0–4).
 

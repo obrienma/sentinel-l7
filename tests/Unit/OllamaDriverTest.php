@@ -266,7 +266,9 @@ it('logs quality score 4 and no warning for a high-quality response', function (
     $embedding = Mockery::mock(EmbeddingService::class);
     $embedding->shouldReceive('embed')->andReturn(array_fill(0, 768, 0.1));
     $vectorCache = Mockery::mock(VectorCacheService::class);
-    $vectorCache->shouldReceive('searchNamespace')->andReturn([]);
+    $vectorCache->shouldReceive('searchNamespace')->andReturn([
+        ['id' => 'p1', 'score' => 0.85, 'metadata' => []],
+    ]);
 
     Log::shouldReceive('info')->once()->with('OllamaDriver: policy RAG retrieval', Mockery::type('array'));
     Log::shouldReceive('info')
@@ -432,7 +434,7 @@ it('logs mean_score and does not flag under_indexed when domain filter returns 2
 
 it('logs null mean_score and does not fire under-indexed warning when no domain is set', function () {
     Http::fake(['*/api/chat' => Http::response(
-        ollamaResponse(['narrative' => str_repeat('Regulatory analysis. ', 8), 'risk_level' => 'high', 'policy_refs' => ['P1'], 'confidence' => 0.9]),
+        ollamaResponse(['narrative' => str_repeat('Regulatory analysis. ', 8), 'risk_level' => 'high', 'policy_refs' => [], 'confidence' => 0.9]),
         200
     )]);
 
@@ -451,4 +453,69 @@ it('logs null mean_score and does not fire under-indexed warning when no domain 
     Log::shouldReceive('warning')->never();
 
     (new OllamaDriver($embedding, $vectorCache))->analyze(ollamaAxiom());
+});
+
+// ─── policy_refs fabrication guard (ADR-0034) ─────────────────────────────────
+
+it('strips policy_refs and logs a fabrication warning when the model cites refs on zero-chunk retrieval', function () {
+    Http::fake(['*/api/chat' => Http::response(
+        ollamaResponse(['narrative' => str_repeat('Regulatory analysis. ', 8), 'risk_level' => 'high', 'policy_refs' => ['AML-99'], 'confidence' => 0.88]),
+        200
+    )]);
+
+    $embedding = Mockery::mock(EmbeddingService::class);
+    $embedding->shouldReceive('embed')->andReturn(array_fill(0, 768, 0.1));
+    $vectorCache = Mockery::mock(VectorCacheService::class);
+    $vectorCache->shouldReceive('searchNamespace')->andReturn([]);
+
+    Log::shouldReceive('info')->twice();
+    Log::shouldReceive('warning')
+        ->once()
+        ->with('OllamaDriver: policy_refs fabricated on empty retrieval', Mockery::on(fn ($ctx) => $ctx['source_id'] === 'sensor-42' &&
+            $ctx['model_asserted_refs'] === ['AML-99']
+        ));
+
+    $result = (new OllamaDriver($embedding, $vectorCache))->analyze(ollamaAxiom());
+
+    expect($result['policy_refs'])->toBe([]);
+});
+
+it('leaves policy_refs untouched when chunks were actually retrieved', function () {
+    Http::fake(['*/api/chat' => Http::response(
+        ollamaResponse(['narrative' => str_repeat('Regulatory analysis. ', 8), 'risk_level' => 'high', 'policy_refs' => ['AML-1'], 'confidence' => 0.9]),
+        200
+    )]);
+
+    $embedding = Mockery::mock(EmbeddingService::class);
+    $embedding->shouldReceive('embed')->andReturn(array_fill(0, 768, 0.1));
+    $vectorCache = Mockery::mock(VectorCacheService::class);
+    $vectorCache->shouldReceive('searchNamespace')->andReturn([
+        ['id' => 'p1', 'score' => 0.85, 'metadata' => []],
+    ]);
+
+    Log::shouldReceive('info')->twice();
+    Log::shouldReceive('warning')->never();
+
+    $result = (new OllamaDriver($embedding, $vectorCache))->analyze(ollamaAxiom());
+
+    expect($result['policy_refs'])->toBe(['AML-1']);
+});
+
+it('does not fire the fabrication warning when policy_refs is already empty on zero-chunk retrieval', function () {
+    Http::fake(['*/api/chat' => Http::response(
+        ollamaResponse(['narrative' => str_repeat('Regulatory analysis. ', 8), 'risk_level' => 'low', 'policy_refs' => [], 'confidence' => 0.7]),
+        200
+    )]);
+
+    $embedding = Mockery::mock(EmbeddingService::class);
+    $embedding->shouldReceive('embed')->andReturn(array_fill(0, 768, 0.1));
+    $vectorCache = Mockery::mock(VectorCacheService::class);
+    $vectorCache->shouldReceive('searchNamespace')->andReturn([]);
+
+    Log::shouldReceive('info')->twice();
+    Log::shouldReceive('warning')->never();
+
+    $result = (new OllamaDriver($embedding, $vectorCache))->analyze(ollamaAxiom());
+
+    expect($result['policy_refs'])->toBe([]);
 });
