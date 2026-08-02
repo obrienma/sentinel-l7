@@ -519,3 +519,24 @@ it('does not fire the fabrication warning when policy_refs is already empty on z
 
     expect($result['policy_refs'])->toBe([]);
 });
+
+it('strips policy_refs on zero-chunk retrieval via analyzeTransaction() too', function () {
+    Http::fake(['*/api/chat' => Http::response(
+        ollamaResponse(['narrative' => 'High value transaction requires review.', 'risk_level' => 'high', 'policy_refs' => ['AML-99'], 'confidence' => 0.9]),
+        200
+    )]);
+
+    $embedding = Mockery::mock(EmbeddingService::class);
+    $embedding->shouldReceive('embed')->andReturn(array_fill(0, 768, 0.1));
+    $vectorCache = Mockery::mock(VectorCacheService::class);
+    $vectorCache->shouldReceive('searchNamespace')->andReturn([]);
+
+    Log::shouldReceive('info')->twice();
+    Log::shouldReceive('warning')
+        ->once()
+        ->with('OllamaDriver: policy_refs fabricated on empty retrieval', Mockery::type('array'));
+
+    $result = (new OllamaDriver($embedding, $vectorCache))->analyzeTransaction(ollamaTransaction());
+
+    expect($result['policy_refs'])->toBe([]);
+});

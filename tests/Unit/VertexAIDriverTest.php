@@ -181,6 +181,52 @@ it('returns unknown fallback when response shape is unexpected', function () {
         ->and($result['risk_level'])->toBe('unknown');
 });
 
+// ─── policy_refs fabrication guard (ADR-0034) ─────────────────────────────────
+
+it('strips policy_refs and logs a fabrication warning when the model cites refs on zero-chunk retrieval', function () {
+    Http::fake(['https://*-aiplatform.googleapis.com/*' => Http::response(
+        vertexResponse(['narrative' => str_repeat('Regulatory analysis. ', 8), 'risk_level' => 'high', 'policy_refs' => ['AML-99'], 'confidence' => 0.88]),
+        200
+    )]);
+
+    $embedding = Mockery::mock(EmbeddingService::class);
+    $embedding->shouldReceive('embed')->andReturn(array_fill(0, 1536, 0.1));
+    $vectorCache = Mockery::mock(VectorCacheService::class);
+    $vectorCache->shouldReceive('searchNamespace')->andReturn([]);
+
+    Log::shouldReceive('info')->twice();
+    Log::shouldReceive('warning')
+        ->once()
+        ->with('VertexAIDriver: policy_refs fabricated on empty retrieval', Mockery::on(fn ($ctx) => $ctx['source_id'] === 'sensor-42' &&
+            $ctx['model_asserted_refs'] === ['AML-99']
+        ));
+
+    $result = (new VertexAIDriver($embedding, $vectorCache, mockVertexTokenService()))->analyze(vertexAxiom());
+
+    expect($result['policy_refs'])->toBe([]);
+});
+
+it('leaves policy_refs untouched when chunks were actually retrieved', function () {
+    Http::fake(['https://*-aiplatform.googleapis.com/*' => Http::response(
+        vertexResponse(['narrative' => str_repeat('Regulatory analysis. ', 8), 'risk_level' => 'high', 'policy_refs' => ['AML-1'], 'confidence' => 0.9]),
+        200
+    )]);
+
+    $embedding = Mockery::mock(EmbeddingService::class);
+    $embedding->shouldReceive('embed')->andReturn(array_fill(0, 1536, 0.1));
+    $vectorCache = Mockery::mock(VectorCacheService::class);
+    $vectorCache->shouldReceive('searchNamespace')->andReturn([
+        ['id' => 'p1', 'score' => 0.85, 'metadata' => []],
+    ]);
+
+    Log::shouldReceive('info')->twice();
+    Log::shouldReceive('warning')->never();
+
+    $result = (new VertexAIDriver($embedding, $vectorCache, mockVertexTokenService()))->analyze(vertexAxiom());
+
+    expect($result['policy_refs'])->toBe(['AML-1']);
+});
+
 // ─── Domain filtering ─────────────────────────────────────────────────────────
 
 it('passes domain filter to searchNamespace when domain key is present in data', function () {

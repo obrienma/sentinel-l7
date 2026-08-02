@@ -52,13 +52,20 @@ abstract class AbstractComplianceDriver implements ComplianceDriver
      * ADR-0034: `chunk_count === 0` means no policy chunk cleared the retrieval
      * threshold, so any non-empty `policy_refs` the model returned is fabricated
      * — the model does not reliably honor "no context retrieved" prompt wording.
+     *
+     * Scope note: this only guards the structured `policy_refs` field. It does
+     * not sanitize `result['narrative']` — free-text prose that also reaches
+     * `compliance_events.audit_narrative` (AxiomProcessorService) and the cached
+     * transaction analysis (TransactionProcessorService) unmodified — and it does
+     * not verify that a `policy_refs` entry corresponds to an actually-retrieved
+     * chunk when `chunk_count > 0`. Both are open follow-ups (see TODO in
+     * CLAUDE.md) requiring their own design decision rather than a blind fix.
      */
     private function guardPolicyRefsAgainstEmptyRetrieval(array $result, array $policyChunks, array $data): array
     {
         if (count($policyChunks) === 0 && ! empty($result['policy_refs'])) {
             Log::warning(class_basename(static::class).': policy_refs fabricated on empty retrieval', [
-                'source_id' => $data['source_id'] ?? null,
-                'domain' => $data['domain'] ?? null,
+                ...$this->auditContext($data),
                 'model_asserted_refs' => $result['policy_refs'],
             ]);
 
@@ -66,6 +73,20 @@ abstract class AbstractComplianceDriver implements ComplianceDriver
         }
 
         return $result;
+    }
+
+    /**
+     * Shared source_id/domain extraction for log context — used by the
+     * fabrication guard, the under-indexed domain warning, and the response
+     * quality log so the three stay consistent if the identifier fallback
+     * logic ever changes.
+     */
+    private function auditContext(array $data): array
+    {
+        return [
+            'source_id' => $data['source_id'] ?? null,
+            'domain' => $data['domain'] ?? null,
+        ];
     }
 
     private function buildTransactionQueryText(array $data): string
@@ -194,8 +215,7 @@ abstract class AbstractComplianceDriver implements ComplianceDriver
                       + (int) $aboveConfidence;
 
         $context = [
-            'source_id' => $data['source_id'] ?? null,
-            'domain' => $data['domain'] ?? null,
+            ...$this->auditContext($data),
             'has_policy_refs' => $hasPolicyRefs,
             'has_risk_level' => $hasRiskLevel,
             'narrative_length' => $narrativeLength,
