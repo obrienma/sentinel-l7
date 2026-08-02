@@ -1,7 +1,7 @@
 # ADR-0033: Reversal of ADR-0020 — WorkOS AuthKit for Sentinel-L7 Multi-Tenant Auth
 
 **Date:** 2026-07-27
-**Status:** Accepted
+**Status:** Proposed
 
 ## Context
 
