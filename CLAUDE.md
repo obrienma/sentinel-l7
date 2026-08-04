@@ -171,7 +171,9 @@ Create decision logs according to https://martinfowler.com/bliki/ArchitectureDec
 - **Work one step at a time** and pause for confirmation before moving to the next build step.
 - **Commit after each logical step** — the user commits manually; don't push. Do provide a commit message for the user.
 - **Don't add features beyond what's asked.** No extra error handling, no extra abstractions, no unrequested refactors. Write todos instead. Note these in suggested commit msg.
-- **After every completed step: update README.md and LEARNING_LOG.md** — this is mandatory, not optional. README: add a new checked item to the Status section (done-only list), add any new forward work to "What's still ahead", and correct any stale architecture descriptions. LEARNING_LOG: append a new phase entry (see format below). Do both before suggesting a commit message.
-- **Maintain `LEARNING_LOG.md`**: After each phase, append new entries for every pattern used, anti-pattern avoided, challenge encountered, or design decision made. Use the established entry format (Pattern / Anti-Pattern / Challenge / Decision sections with **Q:**/**A:** flashcard blocks).
-- **`LEARNING_LOG.md` is referred to as `ll`** in conversation — treat "ll" as shorthand for `LEARNING_LOG.md`.
-- **Challenges are mandatory in every log entry**: Every phase entry must include a `### Challenges` section. If no challenge was encountered, state that explicitly — do not omit the section.
+- **After every completed step: update README.md and follow the journal-anki skill** — this is mandatory, not optional. README: add a new checked item to the Status section (done-only list), add any new forward work to "What's still ahead", and correct any stale architecture descriptions.
+- Journal: before suggesting a commit message, follow the journal-anki skill at `~/.claude/skills/journal-anki/SKILL.md` to write a journal entry (see "Journal (journal-anki)" below).
+
+## Journal (journal-anki)
+
+At the end of any development phase, before proposing a commit or when the user requests a commit message, follow the journal-anki skill at `~/.claude/skills/journal-anki/SKILL.md` to write a journal entry — typed **Pattern** / **Anti-Pattern** / **Challenge** / **Decision** sections, plus paired Anki probe cards. **Challenges are mandatory in every entry**: even if none occurred, state that explicitly rather than omitting the section. `LEARNING_LOG.md` is retired — this repo's journal already migrated to `docs/journal/` (one file per entry); do not add new entries to `LEARNING_LOG.md`.
