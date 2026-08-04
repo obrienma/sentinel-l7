@@ -23,10 +23,13 @@ graph TB
         end
 
         subgraph Services
-            CE[ComplianceEngine]
+            TPS[TransactionProcessorService]
+            APS[AxiomProcessorService]
             CM[ComplianceManager\nService Manager]
             ES[EmbeddingService]
             VCS[VectorCacheService]
+            TAS[ThreatAnalysisService\nTier 3 fallback]
+            ATAS[AxiomThreatAnalysisService\nTier 3 fallback]
         end
 
         subgraph Drivers
@@ -37,18 +40,18 @@ graph TB
         end
     end
 
-    subgraph Workers["Background Processes"]
-        W[sentinel:consume\nStream Worker]
-        R[sentinel:reclaim\nPEL Reclaimer]
+    subgraph Workers["Background Processes\n(XAUTOCLAIM inline each loop — no dedicated reclaimer, ADR-0022)"]
+        W[sentinel:watch\nTransaction Worker]
         WA[sentinel:watch-axioms\nAxiom Worker]
     end
 
     subgraph External["External Services"]
-        GemEmbed["Gemini\nEmbedding API"]
+        EmbedAI["Active EmbeddingDriver\nOllama nomic-embed-text 768-dim (default, ADR-0025)\nor Gemini embedding-001 1536-dim"]
         GemAI["Gemini Flash\nAI Analysis"]
-        OllamaAI["Ollama qwen3.5\nAI Analysis (default)"]
-        VertexAI["Vertex AI\nClaude Sonnet 4.6"]
-        UV["Upstash Vector\nns:default + ns:policies"]
+        OllamaAI["Ollama qwen3.5\nAI Analysis (default, ADR-0027)"]
+        OpenRouterAI["OpenRouter\nAI Analysis"]
+        VertexAI["Vertex AI\nClaude Sonnet 4.6 (ADR-0030)"]
+        UV["Upstash Vector\nns:transactions + ns:policies (ADR-0026)"]
         Redis["Upstash Redis\nStreams\ntransactions + synapse:axioms"]
         PG["Neon PostgreSQL\ncompliance_events"]
     end
@@ -59,24 +62,30 @@ graph TB
     DC --> AM
     AM --> HIR
 
-    W --> CE
-    CE --> CM
+    W --> TPS
+    TPS --> CM
+    TPS --> ES
+    TPS --> VCS
+    TPS --> TAS
     CM --> OLD & GD & OD & VAD
     OLD --> OllamaAI
     GD --> GemAI
-    OD --> GemAI
+    OD --> OpenRouterAI
     VAD --> VertexAI
-    CE --> ES --> GemEmbed
-    CE --> VCS --> UV
+    ES --> EmbedAI
+    VCS --> UV
     W --> Redis
-    R --> Redis
     WA --> Redis
-    WA --> CM
-    WA --> PG
+    WA --> APS
+    APS --> CM
+    APS --> ATAS
+    APS --> PG
     OLD --> ES
     OLD --> VCS
     GD --> ES
     GD --> VCS
+    OD --> ES
+    OD --> VCS
     VAD --> ES
     VAD --> VCS
 
@@ -88,21 +97,23 @@ graph TB
 
     class Home,Login,Dash frontend
     class HC,AC,DC,HIR,AM controller
-    class CE,CM,ES,VCS,OLD,GD,OD,VAD service
-    class GemEmbed,GemAI,OllamaAI,VertexAI,UV,Redis external
-    class W,R,WA worker
+    class TPS,APS,CM,ES,VCS,TAS,ATAS,OLD,GD,OD,VAD service
+    class EmbedAI,GemAI,OllamaAI,OpenRouterAI,VertexAI,UV,Redis,PG external
+    class W,WA worker
 ```
 
 ## Service Dependency Graph
 
 ```mermaid
 graph LR
-    W[sentinel:consume] --> CE[ComplianceEngine]
-    W --> ES[EmbeddingService]
-    W --> VCS[VectorCacheService]
+    W["sentinel:watch\n(XAUTOCLAIM inline, ADR-0022)"] --> TPS[TransactionProcessorService]
     W --> Redis[(Redis Stream\ntransactions)]
 
-    CE --> CM[ComplianceManager]
+    TPS --> ES[EmbeddingService]
+    TPS --> VCS[VectorCacheService]
+    TPS --> CM[ComplianceManager]
+    TPS -.->|embedding/vector failure| TAS[ThreatAnalysisService\nTier 3 fallback]
+
     CM --> OLD[OllamaDriver]
     CM --> GD[GeminiDriver]
     CM --> OD[OpenRouterDriver]
@@ -114,19 +125,20 @@ graph LR
     GD --> GemAI((Gemini Flash))
     GD --> ES
     GD --> VCS
-    OD --> GemAI
+    OD --> OpenRouterAI((OpenRouter))
+    OD --> ES
+    OD --> VCS
     VAD --> VertexAI((Vertex AI\nClaude Sonnet 4.6))
     VAD --> ES
     VAD --> VCS
-    ES --> GemEmbed((Gemini Embed))
-    VCS --> UV((Upstash Vector\nns:default + ns:policies))
+    ES --> EmbedAI((Active EmbeddingDriver\nOllama nomic-embed-text\ndefault, or Gemini))
+    VCS --> UV((Upstash Vector\nns:transactions + ns:policies))
 
-    R[sentinel:reclaim] --> Redis
-
-    WA[sentinel:watch-axioms] --> APS[AxiomProcessorService]
+    WA["sentinel:watch-axioms\n(XAUTOCLAIM inline, ADR-0022)"] --> APS[AxiomProcessorService]
     WA --> ASS[AxiomStreamService]
     WA --> AxRedis[(Redis Stream\nsynapse:axioms)]
     APS --> CM
+    APS -.->|AI failure| ATAS[AxiomThreatAnalysisService\nTier 3 fallback]
     APS --> PG[(Neon PostgreSQL\ncompliance_events)]
     ASS --> AxRedis
 

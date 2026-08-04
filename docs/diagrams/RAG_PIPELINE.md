@@ -12,7 +12,7 @@ Retrieval-Augmented Generation means the AI doesn't reason from training data al
 flowchart TD
     subgraph Ingestion["Policy Ingestion (sentinel:ingest)"]
         MD[".md policy files\npolicies/*.md"] --> Chunk["Chunk on paragraph\nboundaries ~500 words"]
-        Chunk --> Embed1["EmbeddingService::embed\nGemini embedding-001 → 1536-dim"]
+        Chunk --> Embed1["EmbeddingService::embed\nActive EmbeddingDriver — Ollama nomic-embed-text\n768-dim default (ADR-0025), or Gemini embedding-001 1536-dim"]
         Embed1 --> Upsert["VectorCacheService::upsertNamespace\nns:policies"]
     end
 
@@ -40,7 +40,7 @@ flowchart TD
 
 | Namespace | Threshold | Purpose |
 |-----------|-----------|---------|
-| `default` (cache) | ≥ 0.95 | Near-duplicate detection — same transaction pattern |
+| `transactions` (cache) | ≥ 0.90 (`UPSTASH_VECTOR_THRESHOLD`, ADR-0015) | Near-duplicate detection — same transaction pattern |
 | `policies` (RAG) | ≥ 0.70 | Topical relevance — related regulatory domain |
 
 The lower policy threshold is intentional: a compliance question and the policy text that answers it embed at naturally lower similarity than two near-identical transactions.
