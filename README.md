@@ -11,24 +11,22 @@ The [Synapse-L4](https://github.com/obrienma/synapse-l4) sidecar handles the [Ev
 ---
 
 ```mermaid
-%%{init: {'themeVariables': {'fontSize': '10px'}, 'flowchart': {'nodeSpacing': 15, 'rankSpacing': 25}}}%%
+%%{init: {'themeVariables': {'fontSize': '10px'}, 'flowchart': {'nodeSpacing': 15, 'rankSpacing': 30}}}%%
 flowchart LR
-    EH[EventHorizon]
-    XY[Xylem-L6]
-
     subgraph Ingestion
         A[Events<br/>XADD]
         SL[synapse-l4]
     end
 
-    subgraph SentinelL7["sentinel-l7"]
+    subgraph SentinelL7["Sentinel-L7"]
         subgraph Processing
             B[Worker Pool<br/>PHP]
         end
         subgraph Intelligence
-            C[Gemini Flash<br/>+ Policy RAG]
+            CASCADE[Cache → RAG → LLM → Fallback]
         end
         subgraph Interface
+            MCP[MCP Server]
             E[React<br/>Dashboard]
         end
         subgraph Persistence
@@ -36,34 +34,53 @@ flowchart LR
         end
     end
 
-    subgraph "Downstream Consumers"
-        AR[arbiter-L8]
+    AR[Arbiter-L8<br/>External Eval Harness]
+
+    subgraph DC["Downstream Consumers"]
+        direction TB
         LE[Ledger-L5]
         RL[Rhizome-Lens]
     end
 
-    EH -->|Telemetry Events| SL
-    XY -->|SaaS Activity| SL
-    A --> B
-    SL --> B
-    B --> C
-    B --> D
-    D --> E
-    D --> LE
-    SL --> AR
-    SentinelL7 --> AR
-    SentinelL7 --> RL
+    Interface ~~~ AR
+    Interface ~~~ DC
 
-    click EH "https://github.com/obrienma/EventHorizon#readme" "Go to EventHorizon repo"
-    click XY "https://github.com/obrienma/Xylem-L6#readme" "Go to Xylem-L6 repo"
-    click SL "https://github.com/obrienma/synapse-l4#readme" "Go to synapse-l4 repo"
-    click AR "https://github.com/obrienma/Arbiter-L8#readme" "Go to arbiter-L8 repo"
+    A -->|Redis Stream| B
+    SL -->|Validated Events| B
+    B -->|Evaluation Request| CASCADE
+    CASCADE -->|Verdict| D
+    D -->|Query| E
+    D -->|Usage Events| LE
+    SentinelL7 -->|OTel Traces/Logs| RL
+    AR -->|MCP: analyze-transaction<br/>driver override| MCP
+    AR -->|OTel Metrics/Traces| RL
+
+    click CASCADE "docs/diagrams/TRANSACTION_PIPELINE.md" "See the full transaction pipeline diagram"
+    click SL "https://github.com/obrienma/synapse-l4#readme" "Go to Synapse-L4 repo"
+    click AR "https://github.com/obrienma/Arbiter-L8#readme" "Go to Arbiter-L8 repo"
     click LE "https://github.com/obrienma/Ledger-L5#readme" "Go to Ledger-L5 repo"
     click RL "https://github.com/obrienma/Rhizome-Lens#readme" "Go to Rhizome-Lens repo"
 
+    class A,D teal
+    class B purple
+    class MCP,E amber
+    class SL,AR,LE,RL,CASCADE clickable
+
     classDef clickable fill:#1d4ed8,stroke:#1e40af,stroke-width:2px,color:#ffffff
-    class EH,XY,SL,AR,LE,RL clickable
+    classDef teal fill:#E1F5EE,stroke:#0F6E56,color:#04342C
+    classDef purple fill:#EEEDFE,stroke:#534AB7,color:#26215C
+    classDef amber fill:#FDF0D5,stroke:#9A6B0A,color:#4A3200
+
+    style Ingestion fill:#D9D9D9,stroke:#5F5E5A,color:#000000
+    style SentinelL7 fill:#D9D9D9,stroke:#5F5E5A,color:#000000
+    style DC fill:#D9D9D9,stroke:#5F5E5A,color:#000000
+
+    style Processing fill:#FFFFFF,stroke:#5F5E5A,color:#000000
+    style Intelligence fill:#FFFFFF,stroke:#5F5E5A,color:#000000
+    style Interface fill:#FFFFFF,stroke:#5F5E5A,color:#000000
+    style Persistence fill:#FFFFFF,stroke:#5F5E5A,color:#000000
 ```
+*The "Cache → RAG → LLM → Fallback" box collapses the full cascade — see [docs/diagrams/TRANSACTION_PIPELINE.md](docs/diagrams/TRANSACTION_PIPELINE.md) for the step-by-step breakdown, or the [Pipeline Diagram](#-pipeline-diagram) under Architecture for the internal sequencing.*
 
 ---
 
@@ -87,6 +104,7 @@ flowchart LR
   - [🗂️ Processing Layers](#️-processing-layers)
   - [📐 Scale \& Fault Tolerance](#-scale--fault-tolerance)
   - [🧩 Laravel Patterns](#-laravel-patterns)
+  - [🔌 MCP Server](#-mcp-server)
   - [Processing Loop](#processing-loop)
   - [Axiom Ingestion (Synapse-L4 → Compliance Events)](#axiom-ingestion-synapse-l4--compliance-events)
   - [Message Lifecycle (Fault Tolerance)](#message-lifecycle-fault-tolerance)
@@ -180,7 +198,7 @@ open http://localhost:8000/dashboard
 | `php artisan sentinel:watch-axioms` | Axiom stream worker |
 | `php artisan sentinel:ingest` | Index policy docs into vector KB (bumps policy epoch) |
 | `php artisan sentinel:reset-metrics` | Reset dashboard counters |
-| `php artisan sentinel:export-ground-truth --count=200 --output=ground-truth.json` | Export pre-AI labeled transactions (arbiter-l8 offline eval ground truth) |
+| `php artisan sentinel:export-ground-truth --count=200 --output=ground-truth.json` | Export pre-AI labeled transactions (Arbiter-L8 offline eval ground truth) |
 | `./vendor/bin/pest --filter=TestName` | Run a single test |
 | `./vendor/bin/pint` | Run the Pint linter |
 
@@ -194,7 +212,7 @@ open http://localhost:8000/dashboard
 flowchart LR
     EH[EventHorizon]
     XY[Xylem-L6]
-    AR[arbiter-L8<br/>external eval harness]
+    AR[Arbiter-L8<br/>external eval harness]
 
     EH ~~~ AR
 
@@ -242,8 +260,8 @@ flowchart LR
 
     click EH "https://github.com/obrienma/EventHorizon#readme" "Go to EventHorizon repo"
     click XY "https://github.com/obrienma/Xylem-L6#readme" "Go to Xylem-L6 repo"
-    click SL "https://github.com/obrienma/synapse-l4#readme" "Go to synapse-l4 repo"
-    click AR "https://github.com/obrienma/Arbiter-L8#readme" "Go to arbiter-L8 repo"
+    click SL "https://github.com/obrienma/synapse-l4#readme" "Go to Synapse-L4 repo"
+    click AR "https://github.com/obrienma/Arbiter-L8#readme" "Go to Arbiter-L8 repo"
     click LE "https://github.com/obrienma/Ledger-L5#readme" "Go to Ledger-L5 repo"
     click RL "https://github.com/obrienma/Rhizome-Lens#readme" "Go to Rhizome-Lens repo"
 
@@ -262,7 +280,7 @@ The system is composed of three long-running processes plus a shared intelligenc
 | **🔷 Axiom Worker** | `app/Console/Commands/WatchAxioms.php` · `app/Services/AxiomProcessorService.php` | **Axiom Consumer:** `XREADGROUP` on `synapse:axioms`; threshold routing (`anomaly_score > 0.8`) → AI audit narrative → Postgres. Every Axiom persisted — no silent drops. |
 | **🧠 AI Layer** | `app/Contracts/ComplianceDriver.php` · `app/Services/ComplianceManager.php` | **Driver Abstraction:** Resolves `ollama` (default), `gemini`, or `openrouter` from env via Laravel Service Manager; domain logic only depends on the `ComplianceDriver` interface. |
 | **💾 Vector Layer** | `app/Services/VectorCacheService.php` · `app/Services/EmbeddingService.php` | **Semantic Cache + RAG:** Upstash Vector `transactions` namespace (cache, ≥ 0.90) + `policies` namespace (RAG, ≥ 0.70, domain-filtered); fingerprint embedding via Ollama `nomic-embed-text` (768-dim) or Gemini `embedding-001` (1536-dim), swappable via `SENTINEL_EMBEDDING_DRIVER`. |
-| **🔌 MCP** | `app/Mcp/Servers/SentinelServer.php` · `routes/ai.php` | **Agent Protocol:** Model Context Protocol endpoint at `POST /mcp`; exposes `analyze_transaction`, `search_policies`, and `get_recent_transactions` tools to AI agents (Claude Desktop, Cursor, etc.). |
+| **🔌 MCP** | `app/Mcp/Servers/SentinelServer.php` · `routes/ai.php` | **Agent Protocol:** Model Context Protocol endpoint at `POST /mcp`; exposes `analyze_transaction`, `search_policies`, and `get_recent_transactions` tools. Synchronous JSON-RPC over HTTP — no queue, no durability. Consumed by interactive AI agents (Claude Desktop, Cursor, VS Code Copilot) and by [Arbiter-L8](https://github.com/obrienma/Arbiter-L8), an external eval harness. See [🔌 MCP Server](#-mcp-server) below for details. |
 
 ### 📐 Scale & Fault Tolerance
 
@@ -276,6 +294,26 @@ The system is composed of three long-running processes plus a shared intelligenc
 * **Policy epoch invalidation** — cached compliance verdicts carry an MD5 of the policy corpus; mismatched epochs on cache hits trigger re-analysis so no verdict survives a policy update unexamined
 * **Prompt versioning** — all LLM templates live in `prompts/` as versioned Markdown with changelogs and `Used by:` lists; the active `ComplianceDriver` loads the compiled `.txt` form at runtime; prompt drift is visible in git like code drift
 * **Named rate limiters** — `RateLimiter::for()` limiters on login, signup, and `/dashboard/stream`; all thresholds backed by `RATE_LIMIT_*` env vars via `config/sentinel.php`
+
+### 🔌 MCP Server
+
+`Mcp::web('/mcp', SentinelServer::class)` (`routes/ai.php`) registers a plain synchronous HTTP route — the same request/response model as any Laravel controller, not a queued job. A caller's request is handled inline, in-process, and the compliance verdict is returned in that same HTTP response. Full tool request/response shapes are documented in [API.md](docs/API.md).
+
+**Tools:**
+
+* `analyze_transaction` — runs a transaction through the full pipeline (semantic cache → policy RAG → AI analysis, or Tier 3 fallback on infra failure)
+* `search_policies` — semantic search over the indexed policy knowledge base (`ns:policies`, threshold ≥ 0.70)
+* `get_recent_transactions` — reads the live Redis feed of recently processed transactions
+
+`analyze_transaction` also accepts an optional `driver` (`gemini`/`openrouter`/`ollama`/`vertexai`) that forces a specific `ComplianceManager` provider instead of the configured default. Setting it bypasses the semantic vector cache entirely (no read, no write) and never falls back to Tier 3 on failure — a driver-override call always reflects that one provider's live verdict.
+
+> [!NOTE]
+> Because the endpoint is a synchronous, non-durable RPC, a verdict only exists for the lifetime of the HTTP request that produced it — there's no queue or database row to recover it from if the caller drops the connection mid-call. This is a deliberate scope boundary, not an oversight: the durable, at-least-once pipeline (`sentinel:watch` on the `transactions` stream) is what production transactions go through. The MCP endpoint exists for callers that want an on-demand, synchronous verdict and can tolerate re-running a lost call — it was never meant to carry the same delivery guarantees as the stream pipeline.
+
+**Known consumers:**
+
+* **[Arbiter-L8](https://github.com/obrienma/Arbiter-L8)** — an external Python evaluation harness. Its `adapters/sentinel_l7.py` speaks MCP-over-HTTP directly to `/mcp` to score compliance verdicts against labeled ground truth (offline) and to run cross-provider disagreement checks via the `driver` override (online) — see the "Per-request `ComplianceManager` driver override" entry under [Shipped Features](#-production-ready-baseline).
+* **Interactive AI agents** — Claude Desktop, Cursor, VS Code Copilot — call the tools ad hoc during a chat/coding session.
 
 ### Processing Loop
 
@@ -510,7 +548,7 @@ No dashboard change is needed once a driver call succeeds — the queries are al
 
 ### 🐛 Known issues
 
-* **Semantic cache can permanently amplify a single wrong verdict for narrow-profile merchants.** The Upstash Vector cache (similarity threshold 0.90) matches on embedding similarity, not transaction identity. A merchant profile whose transactions are narrow enough in amount range and message wording (e.g. the `suspicious`-category simulation profile) can embed near-identically across every transaction it generates — so if the *first* one is ever misanalyzed, every subsequent similar transaction inherits that one stale, wrong cached verdict indefinitely, rather than getting an independent re-analysis. Discovered during arbiter-l8's Phase 3 step 8 live judge validation (worked around there via the per-request driver override, which bypasses the cache entirely — see arbiter-l8's `docs/journal/arbiter-l8-2026-07-04T1720-ground-truth-export-and-judge-validation.md`). Not yet fixed here; no cache-invalidation or per-merchant TTL exists today.
+* **Semantic cache can permanently amplify a single wrong verdict for narrow-profile merchants.** The Upstash Vector cache (similarity threshold 0.90) matches on embedding similarity, not transaction identity. A merchant profile whose transactions are narrow enough in amount range and message wording (e.g. the `suspicious`-category simulation profile) can embed near-identically across every transaction it generates — so if the *first* one is ever misanalyzed, every subsequent similar transaction inherits that one stale, wrong cached verdict indefinitely, rather than getting an independent re-analysis. Discovered during Arbiter-L8's Phase 3 step 8 live judge validation (worked around there via the per-request driver override, which bypasses the cache entirely — see Arbiter-L8's `docs/journal/arbiter-l8-2026-07-04T1720-ground-truth-export-and-judge-validation.md`). Not yet fixed here; no cache-invalidation or per-merchant TTL exists today.
 
 ### 📦 Production-Ready Baseline
 
@@ -539,7 +577,7 @@ No dashboard change is needed once a driver call succeeds — the queries are al
 * EmbeddingDriver stack (ADR-0025) — `GeminiEmbeddingDriver`, `OllamaEmbeddingDriver` (nomic-embed-text v1.5, 768-dim, task-prefixed `search_document`/`search_query` inputs), `EmbeddingManager` (Service Manager pattern), swap via `SENTINEL_EMBEDDING_DRIVER`; `EmbeddingService` now delegates to the resolved driver instead of calling Gemini directly. Live in this environment: Upstash Vector index recreated at 768-dim, policy KB re-ingested against Ollama.
 * Named Vector namespaces (ADR-0026) — `VectorCacheService` no longer has any bare/default-namespace methods; transaction semantic cache moved from Upstash's implicit default namespace to an explicit `transactions` namespace, matching `policies`. Sets the pattern for future namespaces (e.g. telemetry) and tenant-prefixed namespacing.
 * ADR-0007 Tier 2 drift closed — `TransactionProcessorService` now calls `ComplianceDriver::analyzeTransaction()` (Gemini/OpenRouter + policy RAG) on a cache miss instead of the rule-based `ThreatAnalysisService`; `ThreatAnalysisService` is reserved for Tier 3 (infra failure) as ADR-0007 originally specified. New `transaction-compliance-analysis` prompt added for the transaction-shaped query.
-* Per-request `ComplianceManager` driver override — `TransactionProcessorService::process()` and the `analyze_transaction` MCP tool accept an optional `driver` (`gemini`/`openrouter`/`ollama`/`vertexai`) that bypasses the semantic vector cache entirely (no read, no write) and never falls back to Tier 3 on failure, so the same transaction can be scored through two different providers for cross-provider disagreement measurement. Built for arbiter-l8's online disagreement layer.
+* Per-request `ComplianceManager` driver override — `TransactionProcessorService::process()` and the `analyze_transaction` MCP tool accept an optional `driver` (`gemini`/`openrouter`/`ollama`/`vertexai`) that bypasses the semantic vector cache entirely (no read, no write) and never falls back to Tier 3 on failure, so the same transaction can be scored through two different providers for cross-provider disagreement measurement. Built for Arbiter-L8's online disagreement layer.
 
 #### 🔷 Axiom / Synapse-L4 Integration
 * Synapse-L4 Axiom ingestion — `synapse:axioms` Redis stream + `sentinel:watch-axioms` worker
